@@ -1,4 +1,5 @@
-import { execFile } from 'child_process';
+import { spawn } from 'child_process';
+import { text } from 'node:stream/consumers';
 import { whichSync } from './which.js';
 /**
  * Check if ripgrep (rg) is available synchronously
@@ -17,26 +18,28 @@ export function hasRipgrepSync() {
  * @throws Error if ripgrep exits with non-zero status (except exit code 1 which means no matches)
  */
 export async function ripGrep(args, target, abortSignal, config = { command: 'rg' }) {
-    const { command, args: commandArgs = [] } = config;
-    return new Promise((resolve, reject) => {
-        execFile(command, [...commandArgs, ...args, target], {
-            maxBuffer: 20000000, // 20MB
-            signal: abortSignal,
-            timeout: 10000, // 10 second timeout
-        }, (error, stdout, stderr) => {
-            // Success case - exit code 0
-            if (!error) {
-                resolve(stdout.trim().split('\n').filter(Boolean));
-                return;
-            }
-            // Exit code 1 means "no matches found" - this is normal, return empty array
-            if (error.code === 1) {
-                resolve([]);
-                return;
-            }
-            // All other errors should fail
-            reject(new Error(`ripgrep failed with exit code ${error.code}: ${stderr || error.message}`));
-        });
+    const { command, args: commandArgs = [], argv0 } = config;
+    const child = spawn(command, [...commandArgs, ...args, target], {
+        argv0,
+        signal: abortSignal,
+        timeout: 10000,
+        windowsHide: true,
     });
+    const [stdout, stderr, code] = await Promise.all([
+        text(child.stdout),
+        text(child.stderr),
+        new Promise((resolve, reject) => {
+            child.on('close', resolve);
+            child.on('error', reject);
+        }),
+    ]);
+    if (code === 0) {
+        return stdout.trim().split('\n').filter(Boolean);
+    }
+    if (code === 1) {
+        // Exit code 1 means "no matches found" - this is normal
+        return [];
+    }
+    throw new Error(`ripgrep failed with exit code ${code}: ${stderr}`);
 }
 //# sourceMappingURL=ripgrep.js.map
