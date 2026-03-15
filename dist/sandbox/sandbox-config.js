@@ -96,6 +96,11 @@ export const NetworkConfigSchema = z.object({
  */
 export const FilesystemConfigSchema = z.object({
     denyRead: z.array(filesystemPathSchema).describe('Paths denied for reading'),
+    allowRead: z
+        .array(filesystemPathSchema)
+        .optional()
+        .describe('Paths to re-allow reading within denied regions (takes precedence over denyRead). ' +
+        'Use with denyRead to deny a broad region then allow back specific subdirectories.'),
     allowWrite: z
         .array(filesystemPathSchema)
         .describe('Paths allowed for writing'),
@@ -118,13 +123,15 @@ export const IgnoreViolationsConfigSchema = z
  * Ripgrep configuration schema
  */
 export const RipgrepConfigSchema = z.object({
-    command: z
-        .string()
-        .describe('The ripgrep command to execute (e.g., "rg", "claude")'),
+    command: z.string().describe('The ripgrep command to execute'),
     args: z
         .array(z.string())
         .optional()
-        .describe('Additional arguments to pass before ripgrep args (e.g., ["--ripgrep"])'),
+        .describe('Additional arguments to pass before ripgrep args'),
+    argv0: z
+        .string()
+        .optional()
+        .describe('Override argv[0] when spawning (for multicall binaries that dispatch on argv[0])'),
 });
 /**
  * Seccomp configuration schema (Linux only)

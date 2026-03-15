@@ -68,6 +68,7 @@ export declare const NetworkConfigSchema: z.ZodObject<{
  */
 export declare const FilesystemConfigSchema: z.ZodObject<{
     denyRead: z.ZodArray<z.ZodString, "many">;
+    allowRead: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
     allowWrite: z.ZodArray<z.ZodString, "many">;
     denyWrite: z.ZodArray<z.ZodString, "many">;
     allowGitConfig: z.ZodOptional<z.ZodBoolean>;
@@ -75,11 +76,13 @@ export declare const FilesystemConfigSchema: z.ZodObject<{
     denyRead: string[];
     allowWrite: string[];
     denyWrite: string[];
+    allowRead?: string[] | undefined;
     allowGitConfig?: boolean | undefined;
 }, {
     denyRead: string[];
     allowWrite: string[];
     denyWrite: string[];
+    allowRead?: string[] | undefined;
     allowGitConfig?: boolean | undefined;
 }>;
 /**
@@ -93,12 +96,15 @@ export declare const IgnoreViolationsConfigSchema: z.ZodRecord<z.ZodString, z.Zo
 export declare const RipgrepConfigSchema: z.ZodObject<{
     command: z.ZodString;
     args: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    argv0: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     command: string;
     args?: string[] | undefined;
+    argv0?: string | undefined;
 }, {
     command: string;
     args?: string[] | undefined;
+    argv0?: string | undefined;
 }>;
 /**
  * Seccomp configuration schema (Linux only)
@@ -163,6 +169,7 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
     }>;
     filesystem: z.ZodObject<{
         denyRead: z.ZodArray<z.ZodString, "many">;
+        allowRead: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
         allowWrite: z.ZodArray<z.ZodString, "many">;
         denyWrite: z.ZodArray<z.ZodString, "many">;
         allowGitConfig: z.ZodOptional<z.ZodBoolean>;
@@ -170,11 +177,13 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
         denyRead: string[];
         allowWrite: string[];
         denyWrite: string[];
+        allowRead?: string[] | undefined;
         allowGitConfig?: boolean | undefined;
     }, {
         denyRead: string[];
         allowWrite: string[];
         denyWrite: string[];
+        allowRead?: string[] | undefined;
         allowGitConfig?: boolean | undefined;
     }>;
     ignoreViolations: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodArray<z.ZodString, "many">>>;
@@ -183,12 +192,15 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
     ripgrep: z.ZodOptional<z.ZodObject<{
         command: z.ZodString;
         args: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        argv0: z.ZodOptional<z.ZodString>;
     }, "strip", z.ZodTypeAny, {
         command: string;
         args?: string[] | undefined;
+        argv0?: string | undefined;
     }, {
         command: string;
         args?: string[] | undefined;
+        argv0?: string | undefined;
     }>>;
     mandatoryDenySearchDepth: z.ZodOptional<z.ZodNumber>;
     allowPty: z.ZodOptional<z.ZodBoolean>;
@@ -220,6 +232,7 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
         denyRead: string[];
         allowWrite: string[];
         denyWrite: string[];
+        allowRead?: string[] | undefined;
         allowGitConfig?: boolean | undefined;
     };
     ignoreViolations?: Record<string, string[]> | undefined;
@@ -228,6 +241,7 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
     ripgrep?: {
         command: string;
         args?: string[] | undefined;
+        argv0?: string | undefined;
     } | undefined;
     mandatoryDenySearchDepth?: number | undefined;
     allowPty?: boolean | undefined;
@@ -253,6 +267,7 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
         denyRead: string[];
         allowWrite: string[];
         denyWrite: string[];
+        allowRead?: string[] | undefined;
         allowGitConfig?: boolean | undefined;
     };
     ignoreViolations?: Record<string, string[]> | undefined;
@@ -261,6 +276,7 @@ export declare const SandboxRuntimeConfigSchema: z.ZodObject<{
     ripgrep?: {
         command: string;
         args?: string[] | undefined;
+        argv0?: string | undefined;
     } | undefined;
     mandatoryDenySearchDepth?: number | undefined;
     allowPty?: boolean | undefined;

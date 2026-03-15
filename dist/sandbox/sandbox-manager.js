@@ -267,7 +267,7 @@ function checkDependencies(ripgrepConfig) {
 }
 function getFsReadConfig() {
     if (!config) {
-        return { denyOnly: [] };
+        return { denyOnly: [], allowWithinDeny: [] };
     }
     const denyPaths = [];
     for (const p of config.filesystem.denyRead) {
@@ -282,8 +282,22 @@ function getFsReadConfig() {
             denyPaths.push(stripped);
         }
     }
+    // Process allowRead paths (re-allow within denied regions)
+    const allowPaths = [];
+    for (const p of config.filesystem.allowRead ?? []) {
+        const stripped = removeTrailingGlobSuffix(p);
+        if (getPlatform() === 'linux' && containsGlobChars(stripped)) {
+            const expanded = expandGlobPattern(p);
+            logForDebugging(`[Sandbox] Expanded allowRead glob pattern "${p}" to ${expanded.length} paths on Linux`);
+            allowPaths.push(...expanded);
+        }
+        else {
+            allowPaths.push(stripped);
+        }
+    }
     return {
         denyOnly: denyPaths,
+        allowWithinDeny: allowPaths,
     };
 }
 function getFsWriteConfig() {
@@ -394,10 +408,23 @@ async function wrapWithSandbox(command, binShell, customConfig, abortSignal) {
     // Get configs - use custom if provided, otherwise fall back to main config
     // If neither exists, defaults to empty arrays (most restrictive)
     // Always include default system write paths (like /dev/null, /tmp/claude)
-    const userAllowWrite = customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite ?? [];
+    //
+    // Strip trailing /** and filter remaining globs on Linux (bwrap needs
+    // real paths, not globs; macOS subpath matching is also recursive so
+    // stripping is harmless there).
+    const stripWriteGlobs = (paths) => paths
+        .map(p => removeTrailingGlobSuffix(p))
+        .filter(p => {
+        if (getPlatform() === 'linux' && containsGlobChars(p)) {
+            logForDebugging(`[Sandbox] Skipping glob write pattern on Linux: ${p}`);
+            return false;
+        }
+        return true;
+    });
+    const userAllowWrite = stripWriteGlobs(customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite ?? []);
     const writeConfig = {
         allowOnly: [...getDefaultWritePaths(), ...userAllowWrite],
-        denyWithinAllow: customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite ?? [],
+        denyWithinAllow: stripWriteGlobs(customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite ?? []),
     };
     const rawDenyRead = customConfig?.filesystem?.denyRead ?? config?.filesystem.denyRead ?? [];
     const expandedDenyRead = [];
@@ -410,8 +437,20 @@ async function wrapWithSandbox(command, binShell, customConfig, abortSignal) {
             expandedDenyRead.push(stripped);
         }
     }
+    const rawAllowRead = customConfig?.filesystem?.allowRead ?? config?.filesystem.allowRead ?? [];
+    const expandedAllowRead = [];
+    for (const p of rawAllowRead) {
+        const stripped = removeTrailingGlobSuffix(p);
+        if (getPlatform() === 'linux' && containsGlobChars(stripped)) {
+            expandedAllowRead.push(...expandGlobPattern(p));
+        }
+        else {
+            expandedAllowRead.push(stripped);
+        }
+    }
     const readConfig = {
         denyOnly: expandedDenyRead,
+        allowWithinDeny: expandedAllowRead,
     };
     // Check if network config is specified - this determines if we need network restrictions
     // Network restriction is needed when:

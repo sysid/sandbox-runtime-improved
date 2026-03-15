@@ -25,6 +25,7 @@ function getDefaultConfig() {
         },
         filesystem: {
             denyRead: [],
+            allowRead: [],
             allowWrite: [],
             denyWrite: [],
         },
