@@ -61,7 +61,8 @@ export function containsGlobChars(pathPattern) {
  * Used to normalize path patterns since /** just means "directory and everything under it"
  */
 export function removeTrailingGlobSuffix(pathPattern) {
-    return pathPattern.replace(/\/\*\*$/, '');
+    const stripped = pathPattern.replace(/\/\*\*$/, '');
+    return stripped || '/';
 }
 /**
  * Check if a symlink resolution crosses expected path boundaries.
@@ -286,11 +287,17 @@ export function generateProxyEnvVars(httpProxyPort, socksProxyPort) {
         // Use socks5h:// for proper DNS resolution through proxy
         envVars.push(`ALL_PROXY=socks5h://localhost:${socksProxyPort}`);
         envVars.push(`all_proxy=socks5h://localhost:${socksProxyPort}`);
-        // Configure Git to use SSH through SOCKS proxy (platform-aware)
-        if (getPlatform() === 'macos') {
-            // macOS has nc available
-            // Note: No outer quotes - bwrap --setenv sets the value directly without shell interpretation
+        // Configure Git to use SSH through the proxy so DNS resolution happens outside the sandbox
+        const platform = getPlatform();
+        if (platform === 'macos') {
+            // macOS: use BSD nc SOCKS5 proxy support (-X 5 -x)
             envVars.push(`GIT_SSH_COMMAND=ssh -o ProxyCommand='nc -X 5 -x localhost:${socksProxyPort} %h %p'`);
+        }
+        else if (platform === 'linux' && httpProxyPort) {
+            // Linux: use socat HTTP CONNECT via the HTTP proxy bridge.
+            // socat is already a required Linux sandbox dependency, and PROXY: is
+            // portable across all socat versions (unlike SOCKS5-CONNECT which needs >= 1.8.0).
+            envVars.push(`GIT_SSH_COMMAND=ssh -o ProxyCommand='socat - PROXY:localhost:%h:%p,proxyport=${httpProxyPort}'`);
         }
         // FTP proxy support (use socks5h for DNS resolution through proxy)
         envVars.push(`FTP_PROXY=socks5h://localhost:${socksProxyPort}`);
