@@ -7,7 +7,7 @@ import { getPlatform, getWslVersion } from '../utils/platform.js';
 import * as fs from 'fs';
 import { wrapCommandWithSandboxLinux, initializeLinuxNetworkBridge, checkLinuxDependencies, cleanupBwrapMountPoints, } from './linux-sandbox-utils.js';
 import { wrapCommandWithSandboxMacOS, startMacOSSandboxLogMonitor, } from './macos-sandbox-utils.js';
-import { getDefaultWritePaths, containsGlobChars, removeTrailingGlobSuffix, expandGlobPattern, } from './sandbox-utils.js';
+import { getDefaultWritePaths, containsGlobChars, removeTrailingGlobSuffix, expandGlobPattern, ensureSandboxTmpdir, } from './sandbox-utils.js';
 import { SandboxViolationStore } from './sandbox-violation-store.js';
 import { EOL } from 'node:os';
 // ============================================================================
@@ -165,6 +165,10 @@ async function initialize(runtimeConfig, sandboxAskCallback, enableLogMonitor = 
     }
     // Store config for use by other functions
     config = runtimeConfig;
+    // Ensure the sandbox TMPDIR directory exists (default: /tmp/claude).
+    // mktemp fails silently when TMPDIR is missing, producing an empty string;
+    // shell sessions that redirect to that empty path then hang on stdin.
+    ensureSandboxTmpdir();
     // Check dependencies
     const deps = checkDependencies();
     if (deps.errors.length > 0) {

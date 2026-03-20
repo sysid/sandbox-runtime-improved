@@ -59,6 +59,7 @@ import {
   removeTrailingGlobSuffix,
   expandGlobPattern,
   normalizePathForSandbox,
+  ensureSandboxTmpdir,
 } from './sandbox-utils.js'
 import { SandboxViolationStore } from './sandbox-violation-store.js'
 import type { MutateForwardedHeaders } from './request-filter.js'
@@ -392,6 +393,11 @@ async function initialize(
   mitmCA = runtimeConfig.network.tlsTerminate
     ? createMitmCA(runtimeConfig.network.tlsTerminate)
     : undefined
+
+  // Ensure the sandbox TMPDIR directory exists (default: /tmp/claude).
+  // mktemp fails silently when TMPDIR is missing, producing an empty string;
+  // shell sessions that redirect to that empty path then hang on stdin.
+  ensureSandboxTmpdir()
 
   // Check dependencies
   const deps = checkDependencies()
