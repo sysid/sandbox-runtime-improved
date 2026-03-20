@@ -68,6 +68,13 @@ export declare function normalizePathForSandbox(pathPattern: string): string;
  */
 export declare function getDefaultWritePaths(): string[];
 /**
+ * Ensure the sandbox TMPDIR exists so tools like mktemp work inside the sandbox.
+ * When TMPDIR is set to a non-existent path, mktemp silently returns an empty
+ * string; any subsequent use of that empty string as a redirect target (e.g.
+ * `cat $tmp`) reads from stdin and hangs the shell session indefinitely.
+ */
+export declare function ensureSandboxTmpdir(): void;
+/**
  * Generate proxy environment variables for sandboxed processes
  */
 export declare function generateProxyEnvVars(httpProxyPort?: number, socksProxyPort?: number): string[];

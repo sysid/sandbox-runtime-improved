@@ -29,6 +29,7 @@ import {
   containsGlobChars,
   removeTrailingGlobSuffix,
   expandGlobPattern,
+  ensureSandboxTmpdir,
 } from './sandbox-utils.js'
 import { SandboxViolationStore } from './sandbox-violation-store.js'
 import {
@@ -276,6 +277,11 @@ async function initialize(
         `https=${redactUrl(parentProxy.httpsUrl)}`,
     )
   }
+
+  // Ensure the sandbox TMPDIR directory exists (default: /tmp/claude).
+  // mktemp fails silently when TMPDIR is missing, producing an empty string;
+  // shell sessions that redirect to that empty path then hang on stdin.
+  ensureSandboxTmpdir()
 
   // Check dependencies
   const deps = checkDependencies()
