@@ -252,6 +252,21 @@ export function getDefaultWritePaths() {
     return recommendedPaths;
 }
 /**
+ * Ensure the sandbox TMPDIR exists so tools like mktemp work inside the sandbox.
+ * When TMPDIR is set to a non-existent path, mktemp silently returns an empty
+ * string; any subsequent use of that empty string as a redirect target (e.g.
+ * `cat $tmp`) reads from stdin and hangs the shell session indefinitely.
+ */
+export function ensureSandboxTmpdir() {
+    const tmpdir = process.env.CLAUDE_TMPDIR || '/tmp/claude';
+    try {
+        fs.mkdirSync(tmpdir, { recursive: true });
+    }
+    catch (err) {
+        logForDebugging(`Warning: could not create sandbox TMPDIR ${tmpdir}: ${err}`);
+    }
+}
+/**
  * Generate proxy environment variables for sandboxed processes
  */
 export function generateProxyEnvVars(httpProxyPort, socksProxyPort) {
