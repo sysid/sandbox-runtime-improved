@@ -12,6 +12,7 @@ export interface MacOSSandboxParams {
     writeConfig: FsWriteRestrictionConfig | undefined;
     ignoreViolations?: IgnoreViolationsConfig | undefined;
     allowPty?: boolean;
+    allowBrowserProcess?: boolean;
     allowGitConfig?: boolean;
     enableWeakerNetworkIsolation?: boolean;
     binShell?: string;
