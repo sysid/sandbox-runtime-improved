@@ -31,15 +31,35 @@ printing just 1–2 lines of output.
 always exists before any sandboxed command runs. `CLAUDE_TMPDIR` can override
 the default `/tmp/claude`.
 
-### 3. feat: add allowBrowserProcess config for macOS sandbox
+### 3. fix: make Node fetch() honour sandbox proxy env vars
 
-Allows configuring browser process access for macOS sandbox profiles.
+**File:** `src/sandbox/sandbox-utils.ts`
 
-### 4. feat: add allowMachLookup config for custom Mach service access (macOS)
+Node's built-in `fetch()` (undici) ignores `HTTP_PROXY`/`HTTPS_PROXY` by
+default — unlike `curl` and other CLI tools. On Node 22+, the
+`--use-env-proxy` flag tells undici to read these variables.
+
+`generateProxyEnvVars` now sets `NODE_OPTIONS=--use-env-proxy` (prepended to
+any existing `NODE_OPTIONS`) when proxy ports are configured and Node >= 22.
+
+### 4. feat: add allowBrowserProcess config for macOS sandbox
+
+Adds an opt-in `allowBrowserProcess` config option (default: `false`) that
+grants the Seatbelt permissions Chromium-based browsers need to launch.
+
+### 5. fix: report correct version in `srti --version`
+
+**Files:** `src/cli.ts`, `test/cli.test.ts`
+
+`srti --version` previously reported `1.0.0` because `process.env.npm_package_version`
+is only set when running via `npm run` — not when invoking the binary directly.
+Now reads the version from `package.json` via `createRequire`.
+
+### 6. feat: add allowMachLookup config for custom Mach service access (macOS)
 
 Allows configuring custom Mach service lookups in macOS sandbox profiles.
 
-### 5. known limitation: Copilot bash session hangs for outputs > ~4 KB
+### 7. known limitation: Copilot bash session hangs for outputs > ~4 KB
 
 **Not a sandbox-runtime bug.** Reproducible in vanilla Copilot (no sandbox wrapper).
 

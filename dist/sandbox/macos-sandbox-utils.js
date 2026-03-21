@@ -154,7 +154,7 @@ function generateReadRules(config, logTag) {
     // directory (e.g. /Users, /Users/chris) even if only a subdirectory like
     // ~/.local is in allowWithinDeny. This only allows metadata reads on
     // directories — not listing contents (readdir) or reading files.
-    if ((config.denyOnly).length > 0) {
+    if (config.denyOnly.length > 0) {
         rules.push(`(allow file-read-metadata`, `  (vnode-type DIRECTORY))`);
     }
     // Block file movement to prevent bypass via mv/rename
@@ -212,7 +212,7 @@ function generateWriteRules(config, logTag, allowGitConfig = false) {
 /**
  * Generate complete sandbox profile
  */
-function generateSandboxProfile({ readConfig, writeConfig, httpProxyPort, socksProxyPort, needsNetworkRestriction, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, allowPty, allowGitConfig = false, enableWeakerNetworkIsolation = false, logTag, }) {
+function generateSandboxProfile({ readConfig, writeConfig, httpProxyPort, socksProxyPort, needsNetworkRestriction, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, allowPty, allowBrowserProcess = false, allowGitConfig = false, enableWeakerNetworkIsolation = false, logTag, }) {
     const profile = [
         '(version 1)',
         `(deny default (with message "${logTag}"))`,
@@ -442,6 +442,46 @@ function generateSandboxProfile({ readConfig, writeConfig, httpProxyPort, socksP
         profile.push('  (regex #"^/dev/ttys")');
         profile.push(')');
     }
+    // Browser process support (Chrome/Chromium)
+    //
+    // Chromium-based browsers need significantly broader OS permissions than
+    // typical CLI tools. The default Seatbelt profile is designed for commands
+    // like git, node, and npm — Chrome's multi-process architecture requires
+    // Mach IPC for inter-process communication, window server access, GPU
+    // drivers, crash reporting (Crashpad), and more. These services vary by
+    // macOS version and hardware, making an exhaustive allowlist impractical.
+    //
+    // This option grants:
+    //   - All Mach operations (mach*): IPC, bootstrap registration, service
+    //     lookups, task ports, cross-domain lookups. Needed for Crashpad,
+    //     window server (CoreGraphics/SkyLight), CoreDisplay, GPU process, etc.
+    //   - Unrestricted process-info: Chrome manages renderer, GPU, utility,
+    //     and crashpad child processes outside the same sandbox boundary.
+    //   - Broad IOKit access: GPU process and display management.
+    //   - Unrestricted IPC shared memory: renderer ↔ GPU communication.
+    //
+    // Security note: this significantly widens the Mach IPC and process
+    // inspection surface. Filesystem and network restrictions remain fully
+    // enforced. Only enable when browser automation (e.g. agent-browser) is
+    // needed.
+    if (allowBrowserProcess) {
+        profile.push('');
+        profile.push('; Browser process support (Chrome/Chromium)');
+        profile.push('; All Mach operations — Chrome requires bootstrap registration');
+        profile.push('; (Crashpad), service lookups (window server, CoreDisplay, GPU),');
+        profile.push('; task ports, and cross-domain lookups that vary by OS version');
+        profile.push('(allow mach*)');
+        profile.push('');
+        profile.push('; Process info for all processes — Chrome manages renderer, GPU,');
+        profile.push('; utility, and crashpad child processes outside the same sandbox');
+        profile.push('(allow process-info*)');
+        profile.push('');
+        profile.push('; Broader IOKit access — needed for GPU process and display management');
+        profile.push('(allow iokit-open)');
+        profile.push('');
+        profile.push('; Shared memory with non-sandboxed processes (e.g. renderer ↔ GPU)');
+        profile.push('(allow ipc-posix-shm*)');
+    }
     return profile.join('\n');
 }
 /**
@@ -475,7 +515,7 @@ function getTmpdirParentIfMacOSPattern() {
  * Wrap command with macOS sandbox
  */
 export function wrapCommandWithSandboxMacOS(params) {
-    const { command, needsNetworkRestriction, httpProxyPort, socksProxyPort, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, readConfig, writeConfig, allowPty, allowGitConfig = false, enableWeakerNetworkIsolation = false, binShell, } = params;
+    const { command, needsNetworkRestriction, httpProxyPort, socksProxyPort, allowUnixSockets, allowAllUnixSockets, allowLocalBinding, readConfig, writeConfig, allowPty, allowBrowserProcess = false, allowGitConfig = false, enableWeakerNetworkIsolation = false, binShell, } = params;
     // Determine if we have restrictions to apply
     // Read: denyOnly pattern - empty array means no restrictions
     // Write: allowOnly pattern - undefined means no restrictions, any config means restrictions
@@ -498,6 +538,7 @@ export function wrapCommandWithSandboxMacOS(params) {
         allowAllUnixSockets,
         allowLocalBinding,
         allowPty,
+        allowBrowserProcess,
         allowGitConfig,
         enableWeakerNetworkIsolation,
         logTag,
