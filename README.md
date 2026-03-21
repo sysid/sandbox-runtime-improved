@@ -1,4 +1,12 @@
-# Anthropic Sandbox Runtime (srt)
+# Sandbox Runtime Improved
+
+Based on Anthropic Sandbox Runtime.
+
+---
+
+**[Improvements and Fixes](SYSID_README.md)**
+
+---
 
 A lightweight sandboxing tool for enforcing filesystem and network restrictions on arbitrary processes at the OS level, without requiring a container.
 
