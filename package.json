@@ -64,16 +64,16 @@
     "network-filtering",
     "filesystem-restrictions"
   ],
-  "author": "Anthropic PBC",
+  "author": "sysid (fork of Anthropic PBC)",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/anthropic-experimental/sandbox-runtime.git"
+    "url": "git+https://github.com/sysid/sandbox-runtime-improved.git#sysid"
   },
   "bugs": {
-    "url": "https://github.com/anthropic-experimental/sandbox-runtime/issues"
+    "url": "https://github.com/sysid/sandbox-runtime-improved/issues"
   },
-  "homepage": "https://github.com/anthropic-experimental/sandbox-runtime#readme",
+  "homepage": "https://github.com/sysid/sandbox-runtime-improved/tree/sysid#readme",
   "lint-staged": {
     "*.ts": [
       "eslint --fix --cache --cache-location=node_modules/.cache/.eslintcache",
