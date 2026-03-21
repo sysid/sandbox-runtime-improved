@@ -60,20 +60,59 @@ format:  ## format source files with prettier
 check: lint-check typecheck test  ## run all checks (lint + typecheck + test)
 
 ################################################################################
-# Misc \
-MISC:  ## ############################################################
-.PHONY: install-srt
-install-srt:  ## install Anthropic Sandbox Runtime globally via npm
-	npm install -g @anthropic-ai/sandbox-runtime
+# Versioning \
+VERSIONING:  ## ############################################################
 
+.PHONY: bump-fork
+bump-fork:  ## bump fork patch: 0.0.42-sysid.1 → 0.0.42-sysid.2
+	@current=$$(node -p "require('./package.json').version"); \
+	base=$$(echo "$$current" | sed 's/-sysid\.[0-9]*//' ); \
+	patch=$$(echo "$$current" | grep -o '[0-9]*$$'); \
+	next=$$((patch + 1)); \
+	npm version "$$base-sysid.$$next" --no-git-tag-version; \
+	echo "Bumped to $$base-sysid.$$next"
+
+.PHONY: rebase-upstream
+rebase-upstream:  ## fetch upstream and rebase, set new base version
+	git fetch upstream
+	@echo "Run: git rebase upstream/main"
+	@echo "Then: npm version <new_upstream_ver>-sysid.1 --no-git-tag-version"
+
+.PHONY: check-npm-login
+check-npm-login:  ## check if logged into npm
+	@if ! npm whoami &>/dev/null; then \
+		echo "Not logged into npm. Run 'npm login' first."; \
+		exit 1; \
+	fi
+	@echo "npm: logged in as $$(npm whoami)"
+
+.PHONY: check-github-token
+check-github-token:  ## check if GITHUB_TOKEN is set
+	@if [ -z "$$GITHUB_TOKEN" ]; then \
+		echo "GITHUB_TOKEN is not set. Please export your GitHub token before running this command."; \
+		exit 1; \
+	fi
+	@echo "GITHUB_TOKEN is set"
+
+.PHONY: publish
+publish: check check-npm-login clean build  ## run checks, build and publish to npm
+	npm publish --access public --tag latest
+
+################################################################################
+# Setup \
+SETUP:  ## ############################################################
+
+.PHONY: install
+install:  ## install dependencies
+	npm install
 
 .PHONY: run
 run:  ## run sandbox with echo test command
 	node dist/cli.js -c "echo hello from sandbox"
 
-.PHONY: install
-install:  ## install dependencies
-	npm install
+################################################################################
+# Misc \
+MISC:  ## ############################################################
 
 define PRINT_HELP_PYSCRIPT
 import re, sys
