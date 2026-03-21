@@ -4,7 +4,7 @@ Based on Anthropic Sandbox Runtime.
 
 ---
 
-**[Improvements and Fixes](SYSID_README.md)**
+**[Improvements and Fixes](https://github.com/sysid/sandbox-runtime-improved/blob/sysid/SYSID_README.md)**
 
 ---
 
