@@ -1,7 +1,17 @@
 # sysid branch — Fork Notes
 
+Published as [`@sysid/sandbox-runtime-improved`](https://www.npmjs.com/package/@sysid/sandbox-runtime-improved) on npm.
+
+```bash
+npm install -g @sysid/sandbox-runtime-improved
+```
+
 This branch tracks changes on top of `main` from
 [anthropic-experimental/sandbox-runtime](https://github.com/anthropic-experimental/sandbox-runtime).
+
+## Versioning
+
+`<upstream_version>-sysid.<fork_patch>` — e.g. `0.0.43-sysid.1` is the 1st fork release based on upstream `0.0.43`.
 
 ## Changes vs. main
 
