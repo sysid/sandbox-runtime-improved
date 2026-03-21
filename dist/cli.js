@@ -8,6 +8,9 @@ import * as readline from 'readline';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 /**
  * Get default config path
  */
@@ -36,7 +39,7 @@ async function main() {
     program
         .name('srt')
         .description('Run commands in a sandbox with network and filesystem restrictions')
-        .version(process.env.npm_package_version || '1.0.0');
+        .version(version);
     // Default command - run command in sandbox
     program
         .argument('[command...]', 'command to run in the sandbox')
