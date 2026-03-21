@@ -88,3 +88,9 @@ run 'git --no-pager diff main..HEAD -- path/ > /tmp/claude/diff.txt 2>&1 && wc -
 
 The file-redirect path bypasses the PTY entirely; the writer finishes instantly.
 Using `! cmd` for subsequent reads avoids the PTY for large outputs.
+
+## Acknowledgments
+
+PRs on the original sandbox-runtime repo from:
+- https://github.com/carderne
+- https://github.com/MarlzRana

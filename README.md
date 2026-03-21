@@ -6,11 +6,22 @@ Based on Anthropic Sandbox Runtime.
 
 **[Improvements and Fixes](https://github.com/sysid/sandbox-runtime-improved/blob/sysid/SYSID_README.md)**
 
+```json
+{
+    "network": {
+        "upstreamHttpProxy": "http://127.0.0.1:3128"
+    },
+    "allowBrowserProcess": false
+}
+```
+- `network.upstreamHttpProxy` - URL of an upstream HTTP proxy to chain through (e.g., `"http://127.0.0.1:3128"`). When set, the built-in proxy forwards allowed requests through this proxy instead of connecting directly. Useful behind corporate proxies. *(fork-only)*
+- `allowBrowserProcess` - Allow browser process operations in the macOS sandbox (boolean, default: false). Grants Mach IPC, bootstrap registration, IOKit, and POSIX shared memory permissions that Chromium-based browsers need to launch. Required for tools like `agent-browser` that spawn a Chrome subprocess. *(fork-only)*
+
 ---
 
 A lightweight sandboxing tool for enforcing filesystem and network restrictions on arbitrary processes at the OS level, without requiring a container.
 
-`srt` uses native OS sandboxing primitives (`sandbox-exec` on macOS, `bubblewrap` on Linux) and proxy-based network filtering. It can be used to sandbox the behaviour of agents, local MCP servers, bash commands and arbitrary processes.
+`srti` uses native OS sandboxing primitives (`sandbox-exec` on macOS, `bubblewrap` on Linux) and proxy-based network filtering. It can be used to sandbox the behaviour of agents, local MCP servers, bash commands and arbitrary processes.
 
 > **Beta Research Preview**
 >
@@ -19,27 +30,27 @@ A lightweight sandboxing tool for enforcing filesystem and network restrictions 
 ## Installation
 
 ```bash
-npm install -g @anthropic-ai/sandbox-runtime
+npm install -g @sysid/sandbox-runtime
 ```
 
 ## Basic Usage
 
 ```bash
 # Network restrictions
-$ srt "curl anthropic.com"
+$ srti "curl anthropic.com"
 Running: curl anthropic.com
 <html>...</html>  # Request succeeds
 
-$ srt "curl example.com"
+$ srti "curl example.com"
 Running: curl example.com
 Connection blocked by network allowlist  # Request blocked
 
 # Filesystem restrictions
-$ srt "cat README.md"
+$ srti "cat README.md"
 Running: cat README.md
 # Anthropic Sandb...  # Current directory access allowed
 
-$ srt "cat ~/.ssh/id_rsa"
+$ srti "cat ~/.ssh/id_rsa"
 Running: cat ~/.ssh/id_rsa
 cat: /Users/ollie/.ssh/id_rsa: Operation not permitted  # Specific file blocked
 ```
@@ -78,7 +89,7 @@ A key use case is sandboxing Model Context Protocol (MCP) servers to restrict th
 {
   "mcpServers": {
     "filesystem": {
-      "command": "srt",
+      "command": "srti",
       "args": ["npx", "-y", "@modelcontextprotocol/server-filesystem"]
     }
   }
@@ -144,7 +155,7 @@ For more details on sandboxing in Claude Code, see:
 ```
 src/
 ├── index.ts                  # Library exports
-├── cli.ts                    # CLI entrypoint (srt command)
+├── cli.ts                    # CLI entrypoint (srti command)
 ├── utils/                    # Shared utilities
 │   ├── debug.ts             # Debug logging
 │   ├── settings.ts          # Settings reader (permissions + sandbox config)
@@ -165,17 +176,17 @@ src/
 
 ### As a CLI tool
 
-The `srt` command (Anthropic Sandbox Runtime) wraps any command with security boundaries:
+The `srti` command (Anthropic Sandbox Runtime) wraps any command with security boundaries:
 
 ```bash
 # Run a command in the sandbox
-srt echo "hello world"
+srti echo "hello world"
 
 # With debug logging
-srt --debug curl https://example.com
+srti --debug curl https://example.com
 
 # Specify custom settings file
-srt --settings /path/to/srt-settings.json npm install
+srti --settings /path/to/srt-settings.json npm install
 ```
 
 ### As a library
@@ -248,7 +259,7 @@ export type {
 By default, the sandbox runtime looks for configuration at `~/.srt-settings.json`. You can specify a custom path using the `--settings` flag:
 
 ```bash
-srt --settings /path/to/srt-settings.json <command>
+srti --settings /path/to/srt-settings.json <command>
 ```
 
 ### Complete Configuration Example
@@ -419,7 +430,7 @@ This denies reading anything under `/Users` (or `/home` on Linux), then re-allow
 **Running Jest:** Use `--no-watchman` flag to avoid sandbox violations:
 
 ```bash
-srt "jest --no-watchman"
+srti "jest --no-watchman"
 ```
 
 Watchman accesses files outside the sandbox boundaries, which will trigger permission errors. Disabling it allows Jest to run with the built-in file watcher instead.
@@ -554,10 +565,10 @@ Certain sensitive files and directories are **always blocked from writes**, even
 These paths are blocked automatically - you don't need to add them to `denyWrite`. For example, even with `allowWrite: ["."]`, writing to `.bashrc` or `.git/hooks/pre-commit` will fail:
 
 ```bash
-$ srt 'echo "malicious" >> .bashrc'
+$ srti 'echo "malicious" >> .bashrc'
 /bin/bash: .bashrc: Operation not permitted
 
-$ srt 'echo "bad" > .git/hooks/pre-commit'
+$ srti 'echo "bad" > .git/hooks/pre-commit'
 /bin/bash: .git/hooks/pre-commit: Operation not permitted
 ```
 
@@ -626,13 +637,13 @@ log stream --predicate 'process == "sandbox-exec"' --style syslog
 
 ```bash
 # Trace all denied operations
-strace -f srt <your-command> 2>&1 | grep EPERM
+strace -f srti <your-command> 2>&1 | grep EPERM
 
 # Trace specific file operations
-strace -f -e trace=open,openat,stat,access srt <your-command> 2>&1 | grep EPERM
+strace -f -e trace=open,openat,stat,access srti <your-command> 2>&1 | grep EPERM
 
 # Trace network operations
-strace -f -e trace=network srt <your-command> 2>&1 | grep EPERM
+strace -f -e trace=network srti <your-command> 2>&1 | grep EPERM
 ```
 
 ### Advanced: Bring Your Own Proxy
