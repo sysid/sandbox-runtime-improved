@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const program = new Command()
 
   program
-    .name('srt')
+    .name('srti')
     .description(
       'Run commands in a sandbox with network and filesystem restrictions',
     )
