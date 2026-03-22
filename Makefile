@@ -102,6 +102,12 @@ publish: check check-npm-login clean build  ## run checks, build and publish to 
 # Setup \
 SETUP:  ## ############################################################
 
+.PHONY: all
+all: publish  ## publishes and then installs locally from npm
+	npm install -g @sysid/sandbox-runtime-improved
+
+
+
 .PHONY: install
 install:  ## install dependencies
 	npm install
