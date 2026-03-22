@@ -1,6 +1,9 @@
-# Sandbox Runtime Improved
+<p align="left">
+  <img src="doc/srti-logo.png" alt="srti logo" width="300">
+</p>
 
-Based on Anthropic Sandbox Runtime.
+
+Based on [Anthropic Sandbox Runtime](https://github.com/anthropic-experimental/sandbox-runtime).
 
 ---
 
@@ -30,7 +33,7 @@ A lightweight sandboxing tool for enforcing filesystem and network restrictions 
 ## Installation
 
 ```bash
-npm install -g @sysid/sandbox-runtime
+npm install -g @sysid/sandbox-runtime-improved
 ```
 
 ## Basic Usage
