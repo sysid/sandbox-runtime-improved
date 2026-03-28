@@ -5,19 +5,20 @@
 
 Based on [Anthropic Sandbox Runtime](https://github.com/anthropic-experimental/sandbox-runtime).
 
+This fork will be rebased on [SRT](https://github.com/anthropic-experimental/sandbox-runtime) continuously.
+As new features become available, equivalent local ones will be removed.
+
+> Objective: keep as close to original as possible, while allowing selected additional features.
+
 ---
 
 **[Improvements and Fixes](https://github.com/sysid/sandbox-runtime-improved/blob/sysid/SYSID_README.md)**
 
 ```json
 {
-    "network": {
-        "upstreamHttpProxy": "http://127.0.0.1:3128"
-    },
     "allowBrowserProcess": false
 }
 ```
-- `network.upstreamHttpProxy` - URL of an upstream HTTP proxy to chain through (e.g., `"http://127.0.0.1:3128"`). When set, the built-in proxy forwards allowed requests through this proxy instead of connecting directly. Useful behind corporate proxies. *(fork-only)*
 - `allowBrowserProcess` - Allow browser process operations in the macOS sandbox (boolean, default: false). Grants Mach IPC, bootstrap registration, IOKit, and POSIX shared memory permissions that Chromium-based browsers need to launch. Required for tools like `agent-browser` that spawn a Chrome subprocess. *(fork-only)*
 
 ---
@@ -170,6 +171,7 @@ src/
     ├── sandbox-violation-store.ts # Violation tracking
     ├── sandbox-utils.ts      # Shared sandbox utilities
     ├── http-proxy.ts         # HTTP/HTTPS proxy for network filtering
+    ├── parent-proxy.ts       # Upstream/parent proxy chaining
     ├── socks-proxy.ts        # SOCKS5 proxy for network filtering
     ├── linux-sandbox-utils.ts # Linux bubblewrap sandboxing
     └── macos-sandbox-utils.ts # macOS sandbox-exec sandboxing
@@ -198,7 +200,7 @@ srti --settings /path/to/srt-settings.json npm install
 import {
   SandboxManager,
   type SandboxRuntimeConfig,
-} from '@anthropic-ai/sandbox-runtime'
+} from '@sysid/sandbox-runtime-improved'
 import { spawn } from 'child_process'
 
 // Define your sandbox configuration
@@ -237,10 +239,10 @@ child.on('exit', async code => {
 
 ```typescript
 // Main sandbox manager
-export { SandboxManager } from '@anthropic-ai/sandbox-runtime'
+export { SandboxManager } from '@sysid/sandbox-runtime-improved'
 
 // Violation tracking
-export { SandboxViolationStore } from '@anthropic-ai/sandbox-runtime'
+export { SandboxViolationStore } from '@sysid/sandbox-runtime-improved'
 
 // TypeScript types
 export type {
@@ -252,7 +254,7 @@ export type {
   FsReadRestrictionConfig,
   FsWriteRestrictionConfig,
   NetworkRestrictionConfig,
-} from '@anthropic-ai/sandbox-runtime'
+} from '@sysid/sandbox-runtime-improved'
 ```
 
 ## Configuration
@@ -279,6 +281,11 @@ srti --settings /path/to/srt-settings.json <command>
       "*.npmjs.org"
     ],
     "deniedDomains": ["malicious.com"],
+    "parentProxy": {
+      "http": "http://proxy.corp:3128",
+      "https": "http://proxy.corp:3128",
+      "noProxy": "localhost,127.0.0.1,*.internal.corp"
+    },
     "allowUnixSockets": ["/var/run/docker.sock"],
     "allowLocalBinding": false
   },
@@ -307,6 +314,10 @@ Uses an **allow-only pattern** - all network access is denied by default.
 - `network.allowedDomains` - Array of allowed domains (supports wildcards like `*.example.com`). Empty array = no network access.
 - `network.deniedDomains` - Array of denied domains (checked first, takes precedence over allowedDomains)
 - `network.allowLocalBinding` - Allow binding to local ports (boolean, default: false)
+- `network.parentProxy` - Upstream HTTP proxy for outbound connections (object, optional). When set, the sandbox's built-in proxy tunnels traffic through this parent proxy instead of connecting directly. Falls back to `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment variables if unset.
+  - `http` - Proxy URL for plain HTTP traffic (e.g., `"http://proxy.corp:3128"`)
+  - `https` - Proxy URL for HTTPS/CONNECT traffic (falls back to `http` if unset)
+  - `noProxy` - Comma-separated bypass list: hostname suffixes and CIDR ranges that connect directly
 
 **Unix Socket Settings** (platform-specific behavior):
 
@@ -526,6 +537,8 @@ The sandbox runs HTTP and SOCKS5 proxy servers on the host machine that filter a
 - **Linux**: Requests are routed via the filesystem over Unix domain sockets (using `socat` for bridging). The network namespace is removed from the bubblewrap container, ensuring all network traffic must go through the proxies.
 
 - **macOS**: The Seatbelt profile allows communication only to specific localhost ports where the proxies listen. All other network access is blocked.
+
+**Parent/upstream proxy chaining:** When running behind a corporate proxy, configure `network.parentProxy` (or set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` environment variables) to chain the sandbox's proxies through an upstream proxy. Both HTTP and SOCKS5 traffic will tunnel through the parent proxy via CONNECT. Destinations matching `noProxy` patterns bypass the parent and connect directly.
 
 ### Filesystem Isolation
 
