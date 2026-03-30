@@ -72,11 +72,18 @@ bump-fork:  ## bump fork patch: 0.0.42-sysid.1 → 0.0.42-sysid.2
 	npm version "$$base-sysid.$$next" --no-git-tag-version; \
 	echo "Bumped to $$base-sysid.$$next"
 
+.PHONY: update-readme-version
+update-readme-version:  ## update README with current upstream base version
+	@upstream_ver=$$(node -p "require('./package.json').version.replace(/-sysid.*/, '')"); \
+	sed -i.bak "s/(currently based on upstream \*\*v[0-9][^*]*\*\*)/(currently based on upstream **v$$upstream_ver**)/" README.md && rm -f README.md.bak; \
+	echo "README updated to upstream v$$upstream_ver"
+
 .PHONY: rebase-upstream
 rebase-upstream:  ## fetch upstream and rebase, set new base version
 	git fetch upstream
 	@echo "Run: git rebase upstream/main"
 	@echo "Then: npm version <new_upstream_ver>-sysid.1 --no-git-tag-version"
+	@echo "Then: make update-readme-version"
 
 .PHONY: check-npm-login
 check-npm-login:  ## check if logged into npm
