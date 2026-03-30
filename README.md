@@ -19,7 +19,7 @@ As new features become available, equivalent local ones will be removed.
     "allowBrowserProcess": false
 }
 ```
-- `allowBrowserProcess` - Allow browser process operations in the macOS sandbox (boolean, default: false). Grants Mach IPC, bootstrap registration, IOKit, and POSIX shared memory permissions that Chromium-based browsers need to launch. Required for tools like `agent-browser` that spawn a Chrome subprocess. *(fork-only)*
+- `allowBrowserProcess` - **Significantly weakens the macOS sandbox.** Grants `(allow mach*)`, `(allow process-info*)`, `(allow iokit-open)`, and `(allow ipc-posix-shm*)` — permissions Chromium-based browsers need to launch. Filesystem and network restrictions remain enforced. Only enable for browser automation (e.g. `agent-browser`). (boolean, default: false) *(fork-only)*
 
 ---
 
