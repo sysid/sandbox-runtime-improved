@@ -57,6 +57,27 @@ any existing `NODE_OPTIONS`) when proxy ports are configured and Node >= 22.
 Adds an opt-in `allowBrowserProcess` config option (default: `false`) that
 grants the Seatbelt permissions Chromium-based browsers need to launch.
 
+**Warning — this significantly weakens the sandbox.** When enabled, the
+following broad Seatbelt rules are added:
+
+| Rule | What it allows |
+|---|---|
+| `(allow mach*)` | **All** Mach IPC — bootstrap registration, service lookups, task ports, cross-domain lookups. Needed for Crashpad, window server, CoreDisplay, GPU process, etc. |
+| `(allow process-info*)` | Inspect **any** process on the system. Chrome manages renderer, GPU, utility, and crashpad children outside the sandbox boundary. |
+| `(allow iokit-open)` | Broad IOKit device access for GPU and display management. |
+| `(allow ipc-posix-shm*)` | Unrestricted POSIX shared memory (renderer ↔ GPU communication). |
+
+Filesystem and network restrictions remain enforced. Only enable when
+browser automation (e.g. `agent-browser`) is required.
+
+**Configuration** (`~/.srt-settings.json`):
+
+```json
+{
+  "allowBrowserProcess": true
+}
+```
+
 ### 5. fix: report correct version in `srti --version`
 
 **Files:** `src/cli.ts`, `test/cli.test.ts`
