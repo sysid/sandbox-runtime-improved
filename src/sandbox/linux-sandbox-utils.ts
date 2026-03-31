@@ -895,8 +895,14 @@ async function generateFilesystemArgs(
     readDenyPaths.push('/etc/ssh/ssh_config.d')
   }
 
-  for (const pathPattern of readDenyPaths) {
-    const normalizedPath = normalizePathForSandbox(pathPattern)
+  // Normalize then sort shallow-first so tmpfs over ancestor dirs lands before
+  // /dev/null masks on descendant files. Otherwise a file-deny listed before
+  // a dir-deny in denyRead gets wiped when the ancestor tmpfs is applied.
+  const normalizedDenyPaths = readDenyPaths
+    .map(p => normalizePathForSandbox(p))
+    .sort((a, b) => a.split('/').length - b.split('/').length)
+
+  for (const normalizedPath of normalizedDenyPaths) {
     if (!fs.existsSync(normalizedPath)) {
       logForDebugging(
         `[Sandbox Linux] Skipping non-existent read deny path: ${normalizedPath}`,

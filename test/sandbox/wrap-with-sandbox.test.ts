@@ -825,4 +825,44 @@ describe('allowWrite glob suffix handling', () => {
       rmSync(parentDir, { recursive: true, force: true })
     }
   })
+
+  // denyRead entries are sorted shallow-first before mounting, so a file-deny
+  // listed before its ancestor dir-deny still lands on top of the ancestor's
+  // tmpfs + re-allow binds.
+  it('file-deny survives ancestor dir-deny listed after it in denyRead (Linux)', async () => {
+    if (getPlatform() !== 'linux') {
+      return
+    }
+
+    const parentDir = join(tmpdir(), `srt-test-order-${Date.now()}`)
+    const projectDir = join(parentDir, 'project')
+    const envFile = join(projectDir, '.env')
+    mkdirSync(projectDir, { recursive: true })
+    writeFileSync(envFile, '')
+
+    try {
+      await SandboxManager.reset()
+      await SandboxManager.initialize({
+        network: { allowedDomains: [], deniedDomains: [] },
+        filesystem: {
+          // File deliberately listed before the dir that contains it
+          denyRead: [envFile, parentDir],
+          allowRead: [projectDir],
+          allowWrite: [projectDir],
+          denyWrite: [],
+        },
+      })
+
+      const result = await SandboxManager.wrapWithSandbox(command)
+
+      // The /dev/null mask must come after the tmpfs + ro-bind in arg order.
+      const tmpfsAt = result.indexOf(`--tmpfs ${parentDir}`)
+      const maskAt = result.indexOf(`--ro-bind /dev/null ${envFile}`)
+      expect(tmpfsAt).toBeGreaterThan(-1)
+      expect(maskAt).toBeGreaterThan(tmpfsAt)
+    } finally {
+      await SandboxManager.reset()
+      rmSync(parentDir, { recursive: true, force: true })
+    }
+  })
 })
