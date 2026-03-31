@@ -290,6 +290,13 @@ const generatedSeccompFilters: Set<string> = new Set()
 // be cleaned up explicitly.
 const bwrapMountPoints: Set<string> = new Set()
 
+// Number of wrapped commands that have been generated but whose cleanup has
+// not yet run. cleanupBwrapMountPoints() defers file deletion while this is
+// positive, because deleting a mount point file on the host while another
+// bwrap instance is still running detaches that instance's bind mount and
+// the deny rule stops applying inside it.
+let activeSandboxCount = 0
+
 let exitHandlerRegistered = false
 
 /**
@@ -308,7 +315,7 @@ function registerExitCleanupHandler(): void {
         // Ignore cleanup errors during exit
       }
     }
-    cleanupBwrapMountPoints()
+    cleanupBwrapMountPoints({ force: true })
   })
 
   exitHandlerRegistered = true
@@ -325,10 +332,31 @@ function registerExitCleanupHandler(): void {
  * ghost dotfiles (e.g. .bashrc, .gitconfig) from appearing in the working
  * directory. It is also called automatically on process exit as a safety net.
  *
- * Safe to call at any time — it only removes files that were tracked during
- * generateFilesystemArgs() and skips any that no longer exist.
+ * Each call decrements the active-sandbox counter that was incremented by
+ * wrapCommandWithSandboxLinux(). File deletion is deferred until the counter
+ * reaches zero. Deleting a mount point file on the host while another bwrap
+ * instance is still running detaches that instance's bind mount (the dentry
+ * is unhashed, so path lookup no longer finds the mount) and the deny rule
+ * stops applying inside that sandbox.
+ *
+ * Pass `{ force: true }` to delete unconditionally — used by the process-exit
+ * handler and reset() where deferral is not meaningful.
  */
-export function cleanupBwrapMountPoints(): void {
+export function cleanupBwrapMountPoints(opts?: { force?: boolean }): void {
+  if (!opts?.force) {
+    if (activeSandboxCount > 0) {
+      activeSandboxCount--
+    }
+    if (activeSandboxCount > 0) {
+      logForDebugging(
+        `[Sandbox Linux] Deferring mount point cleanup — ${activeSandboxCount} sandbox(es) still active`,
+      )
+      return
+    }
+  } else {
+    activeSandboxCount = 0
+  }
+
   for (const mountPoint of bwrapMountPoints) {
     try {
       // Only remove if it's still the empty file/directory bwrap created.
@@ -1030,6 +1058,14 @@ export async function wrapCommandWithSandboxLinux(
     return command
   }
 
+  // Mark this sandbox invocation as active. cleanupBwrapMountPoints() will
+  // defer file deletion until this (and every other concurrent) invocation
+  // has been cleaned up. The matching decrement happens in
+  // cleanupBwrapMountPoints(), which the caller must invoke after the
+  // spawned command exits. If wrapping fails below, the catch block
+  // decrements so the count does not leak.
+  activeSandboxCount++
+
   const bwrapArgs: string[] = ['--new-session', '--die-with-parent']
   let seccompFilterPath: string | undefined = undefined
 
@@ -1234,6 +1270,11 @@ export async function wrapCommandWithSandboxLinux(
 
     return wrappedCommand
   } catch (error) {
+    // Undo the activeSandboxCount increment — the caller won't call
+    // cleanupBwrapMountPoints() for a wrap that threw.
+    if (activeSandboxCount > 0) {
+      activeSandboxCount--
+    }
     // Clean up seccomp filter on error
     if (seccompFilterPath && !seccompFilterPath.includes('/vendor/seccomp/')) {
       generatedSeccompFilters.delete(seccompFilterPath)
