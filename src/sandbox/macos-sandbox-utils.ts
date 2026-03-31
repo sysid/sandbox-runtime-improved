@@ -207,6 +207,7 @@ function generateMoveBlockingRules(
 function generateReadRules(
   config: FsReadRestrictionConfig | undefined,
   logTag: string,
+  writeAllowPaths?: string[],
 ): string[] {
   if (!config) {
     return [`(allow file-read*)`]
@@ -281,6 +282,40 @@ function generateReadRules(
 
   // Block file movement to prevent bypass via mv/rename
   rules.push(...generateMoveBlockingRules(config.denyOnly || [], logTag))
+
+  // Re-allow file-write-unlink for paths that are explicitly write-allowed.
+  // The move-blocking rules above emit broad (deny file-write-unlink (subpath "/Users"))
+  // to prevent bypassing read restrictions by moving files out of denied regions.
+  // However, in macOS Seatbelt, a specific (deny file-write-unlink) is not overridden
+  // by a later (allow file-write*) wildcard — the specific operation deny wins.
+  // This means file deletions are blocked even in write-allowed directories like
+  // the project directory. We fix this by explicitly re-allowing file-write-unlink
+  // for write-allowed paths after the move-blocking deny rules.
+  //
+  // Note: denyWithinAllow paths are not excluded here because the write section's
+  // generateMoveBlockingRules() runs later in the profile and re-denies
+  // file-write-unlink for those paths (Seatbelt uses last-match-wins). This
+  // depends on read rules being emitted before write rules in generateSandboxProfile().
+  if (writeAllowPaths && writeAllowPaths.length > 0) {
+    for (const pathPattern of writeAllowPaths) {
+      const normalizedPath = normalizePathForSandbox(pathPattern)
+
+      if (containsGlobChars(normalizedPath)) {
+        const regexPattern = globToRegex(normalizedPath)
+        rules.push(
+          `(allow file-write-unlink`,
+          `  (regex ${escapePath(regexPattern)})`,
+          `  (with message "${logTag}"))`,
+        )
+      } else {
+        rules.push(
+          `(allow file-write-unlink`,
+          `  (subpath ${escapePath(normalizedPath)})`,
+          `  (with message "${logTag}"))`,
+        )
+      }
+    }
+  }
 
   return rules
 }
@@ -614,8 +649,11 @@ function generateSandboxProfile({
   profile.push('')
 
   // Read rules
+  // Pass write-allowed paths so that move-blocking deny rules in the read section
+  // can be overridden for paths where file deletion should be permitted.
+  const writeAllowPaths = writeConfig?.allowOnly
   profile.push('; File read')
-  profile.push(...generateReadRules(readConfig, logTag))
+  profile.push(...generateReadRules(readConfig, logTag, writeAllowPaths))
   profile.push('')
 
   // Write rules
