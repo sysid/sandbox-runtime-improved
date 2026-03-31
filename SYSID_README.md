@@ -11,7 +11,7 @@ This branch tracks changes on top of `main` from
 
 ## Versioning
 
-`<upstream_version>-sysid.<fork_patch>` — e.g. `0.0.43-sysid.1` is the 1st fork release based on upstream `0.0.43`.
+`<upstream_version>-sysid.<fork_patch>` — e.g. `0.0.45-sysid.1` is the 1st fork release based on upstream `0.0.45`.
 
 ## Changes vs. main
 
