@@ -95,6 +95,45 @@ run 'git --no-pager diff main..HEAD -- path/ > /tmp/claude/diff.txt 2>&1 && wc -
 The file-redirect path bypasses the PTY entirely; the writer finishes instantly.
 Using `! cmd` for subsequent reads avoids the PTY for large outputs.
 
+### 6. feat: Docker-based seccomp binary cross-compilation for local publishing
+
+**Files:** `Makefile`, `package.json`, `vendor/seccomp/Dockerfile.build`
+
+Upstream PR [#199](https://github.com/anthropic-experimental/sandbox-runtime/pull/199) bakes BPF
+bytecode into the `apply-seccomp` binary at compile time. The upstream CI builds these on native
+Linux runners (x64 + arm64). Since we publish locally from macOS via `make publish`, the
+`build:seccomp` script (which requires Linux + gcc + libseccomp-dev) cannot run natively.
+
+A Docker-based build step cross-compiles static ELF binaries for both architectures using
+platform-specific containers (QEMU emulation via Docker Desktop).
+
+**Requires:** Docker Desktop running.
+
+**Make targets:**
+
+| Target | Description |
+|---|---|
+| `make build-seccomp` | Build `apply-seccomp` for x64 and arm64 via Docker |
+| `make check-package` | Build binaries, pack tarball, verify both are included |
+| `make publish` | Now depends on `build-seccomp` automatically |
+
+**Safety net:** `prepublishOnly` in `package.json` aborts `npm publish` if either binary is
+missing from the package.
+
+```bash
+  make publish
+    → check (lint, typecheck, test)
+    → check-npm-login
+    → build-seccomp          ← Docker builds x64 + arm64 binaries into vendor/seccomp/
+    → clean                  ← removes dist/
+    → build                  ← tsc compiles TypeScript
+    → npm publish
+        → prepublishOnly     ← copies vendor/ into dist/, aborts if binaries missing
+```
+
+The "files" field in package.json ships both vendor/ and dist/, so the binaries end up in the
+tarball at vendor/seccomp/{x64,arm64}/apply-seccomp. You can verify with make check-package
+anytime.
 ## Acknowledgments
 
 PRs on the original sandbox-runtime repo from:

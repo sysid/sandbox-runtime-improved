@@ -20,7 +20,7 @@
     "lint": "eslint 'src/**/*.ts' --fix --cache --cache-location=node_modules/.cache/.eslintcache",
     "lint:check": "eslint 'src/**/*.ts' --cache --cache-location=node_modules/.cache/.eslintcache",
     "format": "prettier --write 'src/**/*.ts' --cache --log-level warn",
-    "prepublishOnly": "npm run clean && npm run build && cp -r vendor dist/",
+    "prepublishOnly": "npm run clean && npm run build && cp -r vendor dist/ && node -e \"['x64','arm64'].forEach(a=>{if(!require('fs').existsSync('dist/vendor/seccomp/'+a+'/apply-seccomp')){console.error('Missing seccomp binary: '+a);process.exit(1)}})\"",
     "prepare": "husky"
   },
   "dependencies": {
