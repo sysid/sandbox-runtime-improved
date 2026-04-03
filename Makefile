@@ -12,6 +12,20 @@ BUILD:  ## ############################################################
 build:  ## compile TypeScript
 	npm run build
 
+SECCOMP_IMAGE := sysid/seccomp-builder
+
+.PHONY: build-seccomp
+build-seccomp:  ## cross-compile seccomp binaries via Docker (x64+arm64)
+	docker build --platform linux/amd64 -t $(SECCOMP_IMAGE):amd64 -f vendor/seccomp/Dockerfile.build vendor/seccomp/
+	docker run --rm --platform linux/amd64 \
+		-v "$(CURDIR)/vendor:/build/vendor" \
+		$(SECCOMP_IMAGE):amd64 bun vendor/seccomp/build.ts
+	docker build --platform linux/arm64 -t $(SECCOMP_IMAGE):arm64 -f vendor/seccomp/Dockerfile.build vendor/seccomp/
+	docker run --rm --platform linux/arm64 \
+		-v "$(CURDIR)/vendor:/build/vendor" \
+		$(SECCOMP_IMAGE):arm64 bun vendor/seccomp/build.ts
+	@file vendor/seccomp/x64/apply-seccomp vendor/seccomp/arm64/apply-seccomp
+
 .PHONY: clean
 clean:  ## remove build artifacts
 	npm run clean
@@ -102,7 +116,7 @@ check-github-token:  ## check if GITHUB_TOKEN is set
 	@echo "GITHUB_TOKEN is set"
 
 .PHONY: publish
-publish: check check-npm-login clean build  ## run checks, build and publish to npm
+publish: check check-npm-login build-seccomp clean build  ## run checks, build, compile seccomp, publish
 	npm publish --access public --tag latest
 
 ################################################################################
@@ -118,6 +132,22 @@ all: publish  ## publishes and then installs locally from npm
 .PHONY: install
 install:  ## install dependencies
 	npm install
+
+.PHONY: check-package
+check-package: build-seccomp  ## verify seccomp binaries are included in npm package
+	@tgz=$$(npm pack 2>/dev/null | tail -1); \
+	echo "Checking $$tgz for seccomp binaries..."; \
+	missing=0; \
+	for arch in x64 arm64; do \
+		if tar tf "$$tgz" | grep -q "vendor/seccomp/$$arch/apply-seccomp"; then \
+			echo "  ✓ $$arch binary found"; \
+		else \
+			echo "  ✗ $$arch binary MISSING"; \
+			missing=1; \
+		fi; \
+	done; \
+	rm -f "$$tgz"; \
+	[ $$missing -eq 0 ] || (echo "FAIL: seccomp binaries missing from package"; exit 1)
 
 .PHONY: run
 run:  ## run sandbox with echo test command
