@@ -458,7 +458,6 @@ function generateSandboxProfile({
     '  (global-name "com.apple.bsd.dirhelper")',
     '  (global-name "com.apple.securityd.xpc")',
     '  (global-name "com.apple.coreservices.launchservicesd")',
-    '  (global-name "com.apple.SystemConfiguration.configd")',
     ')',
     '',
     ...(enableWeakerNetworkIsolation

@@ -11,22 +11,11 @@ This branch tracks changes on top of `main` from
 
 ## Versioning
 
-`<upstream_version>-sysid.<fork_patch>` — e.g. `0.0.45-sysid.1` is the 1st fork release based on upstream `0.0.45`.
+`<upstream_version>-sysid.<fork_patch>` — e.g. `0.0.49-sysid.1` is the 1st fork release based on upstream `0.0.49`.
 
 ## Changes vs. main
 
-### 1. fix: allow access to `com.apple.SystemConfiguration.configd`
-
-**File:** `src/sandbox/macos-sandbox-utils.ts`
-
-Adds `com.apple.SystemConfiguration.configd` to the allowed Mach service
-lookups in the macOS sandbox profile. Tools like `uv` query `configd` to
-discover network configuration (proxies, DNS, interfaces). Without this
-allowance, network-dependent operations fail inside the sandbox.
-
-The service is read-only and standard for any networked macOS application.
-
-### 2. fix: ensure sandbox TMPDIR exists before first use
+### 1. fix: ensure sandbox TMPDIR exists before first use
 
 **Files:** `src/sandbox/sandbox-utils.ts`, `src/sandbox/sandbox-manager.ts`
 
@@ -41,7 +30,7 @@ printing just 1–2 lines of output.
 always exists before any sandboxed command runs. `CLAUDE_TMPDIR` can override
 the default `/tmp/claude`.
 
-### 3. fix: make Node fetch() honour sandbox proxy env vars
+### 2. fix: make Node fetch() honour sandbox proxy env vars
 
 **File:** `src/sandbox/sandbox-utils.ts`
 
@@ -52,7 +41,7 @@ default — unlike `curl` and other CLI tools. On Node 22+, the
 `generateProxyEnvVars` now sets `NODE_OPTIONS=--use-env-proxy` (prepended to
 any existing `NODE_OPTIONS`) when proxy ports are configured and Node >= 22.
 
-### 4. feat: add allowBrowserProcess config for macOS sandbox
+### 3. feat: add allowBrowserProcess config for macOS sandbox
 
 Adds an opt-in `allowBrowserProcess` config option (default: `false`) that
 grants the Seatbelt permissions Chromium-based browsers need to launch.
@@ -78,7 +67,7 @@ browser automation (e.g. `agent-browser`) is required.
 }
 ```
 
-### 5. fix: report correct version in `srti --version`
+### 4. fix: report correct version in `srti --version`
 
 **Files:** `src/cli.ts`, `test/cli.test.ts`
 
@@ -86,11 +75,7 @@ browser automation (e.g. `agent-browser`) is required.
 is only set when running via `npm run` — not when invoking the binary directly.
 Now reads the version from `package.json` via `createRequire`.
 
-### 6. feat: add allowMachLookup config for custom Mach service access (macOS)
-
-Allows configuring custom Mach service lookups in macOS sandbox profiles.
-
-### 7. known limitation: Copilot bash session hangs for outputs > ~4 KB
+### 5. known limitation: Copilot bash session hangs for outputs > ~4 KB
 
 **Not a sandbox-runtime bug.** Reproducible in vanilla Copilot (no sandbox wrapper).
 
