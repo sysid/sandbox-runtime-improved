@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import shellquote from 'shell-quote'
 import { Command } from 'commander'
 import { SandboxManager } from './index.js'
 import type { SandboxRuntimeConfig } from './sandbox/sandbox-config.js'
@@ -147,8 +148,11 @@ async function main(): Promise<void> {
             command = options.c
             logForDebugging(`Command string mode (-c): ${command}`)
           } else if (commandArgs.length > 0) {
-            // Default mode: simple join
-            command = commandArgs.join(' ')
+            // Default mode: argv-style invocation. The result is later
+            // executed via `bash -c <command>`, so each arg must be
+            // shell-quoted to survive that re-parse — a plain join(' ')
+            // splits arguments containing whitespace (#157).
+            command = shellquote.quote(commandArgs)
             logForDebugging(`Original command: ${command}`)
           } else {
             console.error(
