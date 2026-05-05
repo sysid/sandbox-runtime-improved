@@ -75,9 +75,11 @@ async function main(): Promise<void> {
         },
       ) => {
         try {
-          // Enable debug logging if requested
+          // Enable debug logging if requested. logForDebugging() reads
+          // SRT_DEBUG (not DEBUG, to avoid clashing with the npm `debug`
+          // package and other tools) — keep this in sync with utils/debug.ts.
           if (options.debug) {
-            process.env.DEBUG = 'true'
+            process.env.SRT_DEBUG = 'true'
           }
 
           // Load config from file

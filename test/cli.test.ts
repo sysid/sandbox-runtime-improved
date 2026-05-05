@@ -153,5 +153,14 @@ describe('CLI', () => {
       expect(result.stderr).not.toContain('[SandboxDebug]')
       expect(result.status).toBe(0)
     })
+
+    test('--debug flag enables debug output (without SRT_DEBUG env)', () => {
+      // Regression for #174: the flag must set the same env var the logger
+      // reads. Exercise the flag alone — runCli's {debug:true} option sets
+      // SRT_DEBUG directly, which would mask the bug.
+      const result = runCli(['--debug', 'echo', 'test'])
+      expect(result.stderr).toContain('[SandboxDebug]')
+      expect(result.status).toBe(0)
+    })
   })
 })
