@@ -385,14 +385,16 @@ function checkDependencies(ripgrepConfig?: {
   const errors: string[] = []
   const warnings: string[] = []
 
-  // Check ripgrep - use provided config, then initialized config, then default 'rg'
-  const rgToCheck = ripgrepConfig ?? config?.ripgrep ?? { command: 'rg' }
-  if (whichSync(rgToCheck.command) === null) {
-    errors.push(`ripgrep (${rgToCheck.command}) not found`)
-  }
-
   const platform = getPlatform()
   if (platform === 'linux') {
+    // ripgrep is Linux-only: it's used by linuxGetMandatoryDenyPaths() to
+    // expand glob deny-patterns to concrete paths for bwrap. macOS seatbelt
+    // profiles take regex patterns directly, so rg is never invoked there.
+    const rgToCheck = ripgrepConfig ?? config?.ripgrep ?? { command: 'rg' }
+    if (whichSync(rgToCheck.command) === null) {
+      errors.push(`ripgrep (${rgToCheck.command}) not found`)
+    }
+
     const linuxDeps = checkLinuxDependencies({
       seccompConfig: config?.seccomp,
       bwrapPath: config?.bwrapPath,
