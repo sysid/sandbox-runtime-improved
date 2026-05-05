@@ -327,6 +327,7 @@ async function initialize(
         linuxBridge = await initializeLinuxNetworkBridge(
           httpProxyPort,
           socksProxyPort,
+          config.socatPath,
         )
       }
 
@@ -392,7 +393,11 @@ function checkDependencies(ripgrepConfig?: {
 
   const platform = getPlatform()
   if (platform === 'linux') {
-    const linuxDeps = checkLinuxDependencies(config?.seccomp)
+    const linuxDeps = checkLinuxDependencies({
+      seccompConfig: config?.seccomp,
+      bwrapPath: config?.bwrapPath,
+      socatPath: config?.socatPath,
+    })
     errors.push(...linuxDeps.errors)
     warnings.push(...linuxDeps.warnings)
   }
@@ -708,6 +713,8 @@ async function wrapWithSandbox(
         mandatoryDenySearchDepth: getMandatoryDenySearchDepth(),
         allowGitConfig: getAllowGitConfig(),
         seccompConfig: getSeccompConfig(),
+        bwrapPath: config?.bwrapPath,
+        socatPath: config?.socatPath,
         abortSignal,
       })
 
