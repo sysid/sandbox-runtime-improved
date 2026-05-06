@@ -1,6 +1,6 @@
 {
   "name": "@sysid/sandbox-runtime-improved",
-  "version": "0.0.50",
+  "version": "0.0.50-sysid.1",
   "description": "Improved Anthropic Sandbox Runtime (ASRT) - A general-purpose tool for wrapping security boundaries around arbitrary processes (sysid fork with several improvements and bug fixes)",
   "type": "module",
   "main": "./dist/index.js",

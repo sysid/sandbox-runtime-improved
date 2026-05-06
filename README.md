@@ -5,7 +5,7 @@
 
 Based on [Anthropic Sandbox Runtime](https://github.com/anthropic-experimental/sandbox-runtime).
 
-This fork will be rebased on [SRT](https://github.com/anthropic-experimental/sandbox-runtime) continuously (currently based on upstream **v0.0.49**).
+This fork will be rebased on [SRT](https://github.com/anthropic-experimental/sandbox-runtime) continuously (currently based on upstream **v0.0.50**).
 As new features become available, equivalent local ones will be removed.
 
 > Objective: keep as close to original as possible, while allowing selected additional features.
