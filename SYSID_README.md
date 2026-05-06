@@ -13,6 +13,38 @@ This branch tracks changes on top of `main` from
 
 `<upstream_version>-sysid.<fork_patch>` — e.g. `0.0.49-sysid.1` is the 1st fork release based on upstream `0.0.49`.
 
+## Releasing
+
+### Rebase onto a new upstream version
+
+```bash
+git fetch upstream
+git rebase upstream/main           # resolve conflicts; prefer upstream
+npm version <new_upstream>-sysid.1 --no-git-tag-version
+make update-readme-version         # syncs "currently based on upstream **vX.Y.Z**"
+make check                         # lint + typecheck + test
+git commit -am "chore: rebase onto upstream v<new_upstream>, bump fork version to <new_upstream>-sysid.1"
+```
+
+The `/rebase-upstream` Claude Code skill automates the conflict-resolution rules
+(prefer upstream, drop `dist/`, preserve fork-only features).
+
+### Re-publish without an upstream change
+
+```bash
+make bump-fork                     # 0.0.50-sysid.1 → 0.0.50-sysid.2
+make publish                       # check + build-seccomp + clean + build + npm publish
+```
+
+### Make targets reference
+
+| Target | Purpose |
+|---|---|
+| `make rebase-upstream` | Fetches upstream and prints the manual steps |
+| `make bump-fork` | Bumps fork patch only (`-sysid.N` → `-sysid.N+1`) |
+| `make update-readme-version` | Syncs README upstream-version pointer to `package.json` |
+| `make publish` | Full release pipeline (depends on `build-seccomp`) |
+
 ## Changes vs. main
 
 ### 1. fix: ensure sandbox TMPDIR exists before first use
