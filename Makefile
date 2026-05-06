@@ -92,12 +92,27 @@ update-readme-version:  ## update README with current upstream base version
 	sed -i.bak "s/(currently based on upstream \*\*v[0-9][^*]*\*\*)/(currently based on upstream **v$$upstream_ver**)/" README.md && rm -f README.md.bak; \
 	echo "README updated to upstream v$$upstream_ver"
 
-.PHONY: rebase-upstream
-rebase-upstream:  ## fetch upstream and rebase, set new base version
+.PHONY: sync-main
+sync-main:  ## fast-forward local main to upstream/main (no checkout)
 	git fetch upstream
+	@local_main=$$(git rev-parse refs/heads/main); \
+	upstream_main=$$(git rev-parse refs/remotes/upstream/main); \
+	if [ "$$local_main" = "$$upstream_main" ]; then \
+		echo "main already in sync with upstream/main ($$upstream_main)"; \
+	elif git merge-base --is-ancestor refs/heads/main refs/remotes/upstream/main; then \
+		git update-ref refs/heads/main refs/remotes/upstream/main; \
+		echo "main fast-forwarded to upstream/main ($$upstream_main)"; \
+	else \
+		echo "ERROR: local main has diverged from upstream/main — investigate before forcing"; \
+		exit 1; \
+	fi
+
+.PHONY: rebase-upstream
+rebase-upstream: sync-main  ## sync main, fetch upstream and rebase, set new base version
 	@echo "Run: git rebase upstream/main"
 	@echo "Then: npm version <new_upstream_ver>-sysid.1 --no-git-tag-version"
 	@echo "Then: make update-readme-version"
+	@echo "After rebase: git push origin main  (and force-push sysid as needed)"
 
 .PHONY: check-npm-login
 check-npm-login:  ## check if logged into npm
