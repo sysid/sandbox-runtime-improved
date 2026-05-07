@@ -281,6 +281,11 @@ async function initialize(
 
   // Load TLS-termination CA if configured. Throws on unreadable/non-PEM —
   // tlsTerminate is explicit opt-in, so a bad config is a hard error.
+  if (runtimeConfig.network.tlsTerminate && runtimeConfig.network.mitmProxy) {
+    throw new Error(
+      'network.tlsTerminate and network.mitmProxy are mutually exclusive',
+    )
+  }
   mitmCA = runtimeConfig.network.tlsTerminate
     ? createMitmCA(runtimeConfig.network.tlsTerminate)
     : undefined
