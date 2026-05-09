@@ -193,21 +193,28 @@ export const NetworkConfigSchema = z.object({
       caCertPath: z
         .string()
         .min(1)
+        .optional()
         .describe(
           'Path to a PEM-encoded CA certificate. The sandboxed child is ' +
             'configured to trust this CA, and the TLS-terminating proxy uses ' +
-            'it to sign per-host certificates.',
+            'it to sign per-host certificates. If omitted, SRT generates an ' +
+            'ephemeral CA into a temp directory for the lifetime of the ' +
+            'session.',
         ),
       caKeyPath: z
         .string()
         .min(1)
+        .optional()
         .describe('Path to the PEM-encoded private key for caCertPath.'),
+    })
+    .refine(o => !o.caCertPath === !o.caKeyPath, {
+      message: 'caCertPath and caKeyPath must be provided together',
     })
     .optional()
     .describe(
       '[EXPERIMENTAL] Enable in-process TLS termination so HTTPS ' +
-        'request/response bodies are visible to SRT. Requires a user-' +
-        'supplied CA cert+key; SRT does not generate one.',
+        'request/response bodies are visible to SRT. Provide a CA cert+key, ' +
+        'or omit both to have SRT generate an ephemeral one.',
     ),
   parentProxy: ParentProxyConfigSchema.optional().describe(
     "Upstream HTTP proxy for outbound connections. When set, SRT's proxy " +

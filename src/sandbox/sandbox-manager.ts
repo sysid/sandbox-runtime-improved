@@ -1,7 +1,7 @@
 import { createHttpProxyServer } from './http-proxy.js'
 import { createSocksProxyServer } from './socks-proxy.js'
 import type { SocksProxyWrapper } from './socks-proxy.js'
-import { createMitmCA, type MitmCA } from './mitm-ca.js'
+import { createMitmCA, disposeMitmCA, type MitmCA } from './mitm-ca.js'
 import { logForDebugging } from '../utils/debug.js'
 import { whichSync } from '../utils/which.js'
 import { getPlatform, getWslVersion } from '../utils/platform.js'
@@ -952,6 +952,10 @@ async function reset(): Promise<void> {
 
   // Close servers in parallel (only if they exist, i.e., were started by us)
   const closePromises: Promise<void>[] = []
+
+  if (mitmCA) {
+    closePromises.push(disposeMitmCA(mitmCA))
+  }
 
   if (httpProxyServer) {
     closePromises.push(forceCloseHttpServer(httpProxyServer))

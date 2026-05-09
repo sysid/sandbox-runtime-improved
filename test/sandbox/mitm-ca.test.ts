@@ -1,8 +1,15 @@
 import { describe, test, expect, afterAll } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { createMitmCA } from '../../src/sandbox/mitm-ca.js'
+import { join, dirname } from 'node:path'
+import { createMitmCA, disposeMitmCA } from '../../src/sandbox/mitm-ca.js'
+import { mintLeafCert } from '../../src/sandbox/mitm-leaf.js'
 
 // Committed test-only CA — see test/fixtures/tls-terminate/README.md.
 const FIXTURE_DIR = join(import.meta.dir, '..', 'fixtures', 'tls-terminate')
@@ -71,5 +78,49 @@ describe('mitm-ca: createMitmCA', () => {
     expect(() =>
       createMitmCA({ caCertPath: keyPath, caKeyPath: certPath }),
     ).toThrow(/is not a PEM CERTIFICATE/)
+  })
+})
+
+describe('mitm-ca: ephemeral generation', () => {
+  test('createMitmCA({}) generates a CA, writes PEMs to a temp dir', async () => {
+    const ca = createMitmCA({})
+    try {
+      expect(ca.ephemeral).toBe(true)
+      expect(ca.certPath).toContain('srt-ca-')
+      expect(readFileSync(ca.certPath, 'utf8')).toBe(ca.certPem)
+      expect(readFileSync(ca.keyPath, 'utf8')).toBe(ca.keyPem)
+      expect(ca.certPem).toContain('-----BEGIN CERTIFICATE-----')
+      expect(ca.cert.subject.getField('CN').value).toBe(
+        'sandbox-runtime ephemeral CA',
+      )
+      expect(ca.key.n).toBeDefined()
+      // Can mint a leaf against it.
+      const leaf = mintLeafCert(ca, 'example.com')
+      expect(leaf.certPem).toContain('-----BEGIN CERTIFICATE-----')
+    } finally {
+      await disposeMitmCA(ca)
+    }
+  })
+
+  test('disposeMitmCA removes the temp dir for ephemeral, no-ops for user CA', async () => {
+    const eph = createMitmCA({})
+    const dir = dirname(eph.certPath)
+    expect(existsSync(dir)).toBe(true)
+    await disposeMitmCA(eph)
+    expect(existsSync(dir)).toBe(false)
+
+    const user = createMitmCA({ caCertPath: certPath, caKeyPath: keyPath })
+    expect(user.ephemeral).toBe(false)
+    await disposeMitmCA(user) // must not delete the fixture
+    expect(existsSync(certPath)).toBe(true)
+  })
+
+  test('throws when only one of caCertPath/caKeyPath is provided', () => {
+    expect(() => createMitmCA({ caCertPath: certPath })).toThrow(
+      /must be provided together/,
+    )
+    expect(() => createMitmCA({ caKeyPath: keyPath })).toThrow(
+      /must be provided together/,
+    )
   })
 })
