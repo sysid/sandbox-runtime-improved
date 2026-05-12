@@ -166,6 +166,115 @@ missing from the package.
 The "files" field in package.json ships both vendor/ and dist/, so the binaries end up in the
 tarball at vendor/seccomp/{x64,arm64}/apply-seccomp. You can verify with make check-package
 anytime.
+
+## Notable upstream features
+
+Features that live in upstream but are worth calling out for fork users.
+
+### In-process TLS termination + per-request filter (upstream v0.0.51)
+
+**What it is.** SRT can now terminate TLS *in-process*, decrypt the HTTPS
+traffic of the sandboxed child, and run a per-request JavaScript callback
+that decides allow/deny. Before v0.0.51 the proxy only saw `CONNECT
+host:port` for HTTPS and could enforce the domain allowlist but nothing
+finer. Now you get the full method, URL, headers and (optionally) body of
+every HTTPS request, in your own code, without running a separate MITM
+proxy.
+
+**What it is for.**
+
+- Per-endpoint policy on HTTPS APIs ("allow `POST /v1/messages`, deny
+  `POST /v1/admin/*`") — not just per-host allowlisting.
+- Header- or body-level inspection (redact, log, rate-limit, block on
+  prompt-injection patterns, etc.) where you previously had to stand up
+  `mitmproxy` or similar.
+- Replacing an external `mitmProxy` Unix-socket setup with a callback
+  inside the same Node/Bun process.
+
+**Two pieces that work together.**
+
+| Knob | Purpose | Default |
+|---|---|---|
+| `network.tlsTerminate` | Turn on in-process TLS termination. Either supply a CA cert+key, or omit both and SRT generates an ephemeral RSA-2048 CA into a temp directory for the session. | off |
+| `network.filterRequest` | `async (Request) => { action, reason? }` callback. Runs on plain HTTP through the proxy *and* on terminated HTTPS. Throw = deny (fails closed). | none |
+
+Each is independently useful: `filterRequest` alone gates plain HTTP;
+`tlsTerminate` alone gives you visibility (e.g. logging) without a
+gating callback. Together they give you HTTPS-aware policy.
+
+**Mutually exclusive with `mitmProxy`.** Both set ⇒ `initialize()`
+throws. The external-MITM path and the in-process path can't coexist.
+
+**Use as a library** (`@sysid/sandbox-runtime-improved`):
+
+```ts
+import { SandboxManager } from '@sysid/sandbox-runtime-improved'
+
+await SandboxManager.initialize({
+  network: {
+    allowedDomains: ['api.anthropic.com'],
+
+    // Omit caCertPath/caKeyPath and SRT mints an ephemeral CA for this
+    // session, dropped in a temp dir, cleaned up by reset().
+    tlsTerminate: {},
+
+    // Runs on every parsed request — plain HTTP and terminated HTTPS.
+    filterRequest: async req => {
+      const url = new URL(req.url)
+      if (url.pathname.startsWith('/v1/admin/')) {
+        return { action: 'deny', reason: 'admin endpoints disabled' }
+      }
+      return { action: 'allow' }
+    },
+  },
+  // ...rest of your config
+})
+```
+
+**Or bring your own CA** (e.g. to share trust across multiple sandbox
+sessions, or to pre-install the CA in a long-lived workspace):
+
+```ts
+tlsTerminate: {
+  caCertPath: '/etc/srt/ca.crt',
+  caKeyPath:  '/etc/srt/ca.key',  // RSA only — node-forge can't sign with EC
+}
+```
+
+`caCertPath` and `caKeyPath` are paired: supplying only one is a config
+error.
+
+**Trust env vars injected into the sandboxed child.** SRT writes the CA
+cert path into nine common per-tool trust-store variables so curl,
+Node `fetch`, `pip`, `git`, `aws`, `cargo`, `deno`, etc. accept the
+proxy-minted leaves without you doing anything:
+
+```
+NODE_EXTRA_CA_CERTS  SSL_CERT_FILE       CURL_CA_BUNDLE
+REQUESTS_CA_BUNDLE   PIP_CERT            GIT_SSL_CAINFO
+AWS_CA_BUNDLE        CARGO_HTTP_CAINFO   DENO_CERT
+```
+
+The child also gets read access to the CA cert path even if it falls
+under your `denyRead` config — otherwise the child couldn't read its
+own trust anchor.
+
+**Failure mode is deny.** If your callback throws, rejects, returns
+malformed data, or receives a malformed request, SRT responds `403`
+with `X-Proxy-Error: blocked-by-sandbox-runtime` and the reason in the
+body. A security boundary must fail closed.
+
+**Caveats.**
+- HTTP/1.1 only on the terminated leg — HTTP/2 negotiates down.
+- No WebSocket / `Upgrade` support yet (the inner server refuses them).
+- The terminating leg currently ignores `network.parentProxy`
+  (acknowledged `TODO` upstream); if you need corporate-proxy chaining
+  for the upstream side, stick with `mitmProxy` for now.
+
+For the full design walk-through (data flow, why a per-connection
+Unix-socket inner server, the AKI/SKI gotcha) see
+`thoughts/comprehend/2026-05-12-upstream-v0.0.51-terminating-tls.md`.
+
 ## Acknowledgments
 
 PRs on the original sandbox-runtime repo from:
