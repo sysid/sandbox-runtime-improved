@@ -14,8 +14,9 @@ use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSidToSidW,
 };
 use windows::Win32::Security::{
-    EqualSid, GetTokenInformation, LookupAccountNameW, PSID, SID_NAME_USE,
-    TokenGroups, TokenUser, TOKEN_GROUPS, TOKEN_QUERY, TOKEN_USER,
+    EqualSid, GetTokenInformation, LookupAccountNameW, LookupAccountSidW,
+    PSID, SID_NAME_USE, TokenGroups, TokenUser, TOKEN_GROUPS, TOKEN_QUERY,
+    TOKEN_USER,
 };
 use windows::Win32::System::SystemServices::{
     SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY,
@@ -66,6 +67,57 @@ pub fn psid_to_string(sid: PSID) -> Result<String> {
     let s = from_pwstr(p);
     local_free(p.0 as *mut c_void);
     Ok(s)
+}
+
+/// Outcome of a SID → account reverse lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidExistence {
+    /// `LookupAccountSidW` resolved the SID to an account.
+    Mapped,
+    /// `LookupAccountSidW` returned `ERROR_NONE_MAPPED` — well-formed
+    /// SID with no corresponding account. Treat as "absent".
+    Unmapped,
+    /// Lookup failed for a transient reason (e.g. domain controller
+    /// unreachable). Caller should fall through to other checks
+    /// rather than report absent.
+    Unknown,
+}
+
+/// Reverse-lookup: does any account correspond to `sid_str`?
+/// Used by `group status --group-sid` so a typo'd SID is reported as
+/// `absent` rather than `created-not-on-token`.
+pub fn sid_account_exists(sid_str: &str) -> Result<SidExistence> {
+    use windows::Win32::Foundation::{
+        GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_NONE_MAPPED,
+    };
+    let psid = LocalPsid::from_string(sid_str)?;
+    unsafe {
+        let mut cch_name: u32 = 0;
+        let mut cch_dom: u32 = 0;
+        let mut use_: SID_NAME_USE = SID_NAME_USE::default();
+        // Sizing call — we only care about the error code.
+        let r = LookupAccountSidW(
+            windows::core::PCWSTR::null(),
+            psid.as_psid(),
+            PWSTR::null(),
+            &mut cch_name,
+            PWSTR::null(),
+            &mut cch_dom,
+            &mut use_,
+        );
+        if r.is_ok() {
+            // Shouldn't happen with zero-length buffers, but treat as
+            // mapped if it does.
+            return Ok(SidExistence::Mapped);
+        }
+        match GetLastError() {
+            ERROR_INSUFFICIENT_BUFFER => Ok(SidExistence::Mapped),
+            ERROR_NONE_MAPPED => Ok(SidExistence::Unmapped),
+            // RPC_S_SERVER_UNAVAILABLE, ERROR_TRUSTED_RELATIONSHIP_FAILURE,
+            // etc. — don't claim absence on a transient lookup failure.
+            _ => Ok(SidExistence::Unknown),
+        }
+    }
 }
 
 /// Resolve an account name (local or domain) to a string SID via
@@ -212,6 +264,28 @@ mod tests {
     fn lookup_missing_account_errors() {
         let r = lookup_account_sid("no-such-group-srt-win-test");
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn sid_account_exists_for_well_known() {
+        assert_eq!(
+            sid_account_exists("S-1-5-32-545").unwrap(),
+            SidExistence::Mapped
+        );
+    }
+
+    #[test]
+    fn sid_account_exists_unmapped_for_bogus() {
+        // Well-formed but maps to nothing on any machine.
+        assert_eq!(
+            sid_account_exists("S-1-5-21-1-2-3-9999999").unwrap(),
+            SidExistence::Unmapped
+        );
+    }
+
+    #[test]
+    fn sid_account_exists_errors_on_malformed() {
+        assert!(sid_account_exists("not-a-sid").is_err());
     }
 
     #[test]

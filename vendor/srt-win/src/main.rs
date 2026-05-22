@@ -176,13 +176,38 @@ fn run() -> anyhow::Result<()> {
         }
         Cmd::Group { sub: GroupCmd::Status { group } } => {
             // Resolve SID first; if that fails the group is absent.
-            let gsid = match (&group.group_sid, sid::lookup_account_sid(&group.name)) {
-                (Some(s), _) => s.clone(),
-                (None, Ok(s)) => s,
-                (None, Err(_)) => {
-                    println!("{}", json!({"state": "absent"}));
-                    return Ok(());
+            let gsid = match &group.group_sid {
+                Some(s) => {
+                    // --group-sid bypasses the name lookup, so do a
+                    // reverse lookup to distinguish "exists but not on
+                    // this token yet" from "no such account at all".
+                    // Tolerate transient lookup failure (domain
+                    // unreachable) by falling through to the token
+                    // check.
+                    match sid::sid_account_exists(s) {
+                        Ok(sid::SidExistence::Unmapped) => {
+                            println!("{}", json!({"state": "absent"}));
+                            return Ok(());
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Malformed SID string.
+                            println!(
+                                "{}",
+                                json!({"state": "absent", "error": e.to_string()})
+                            );
+                            return Ok(());
+                        }
+                    }
+                    s.clone()
                 }
+                None => match sid::lookup_account_sid(&group.name) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        println!("{}", json!({"state": "absent"}));
+                        return Ok(());
+                    }
+                },
             };
             let out = match sid::group_state_for_self(&gsid)? {
                 sid::GroupState::Enabled => {

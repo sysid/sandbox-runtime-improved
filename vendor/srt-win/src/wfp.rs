@@ -42,9 +42,9 @@ use windows::Win32::Foundation::{
     LocalFree, ERROR_MEMBER_IN_ALIAS, HANDLE, HLOCAL,
 };
 use windows::Win32::NetworkManagement::NetManagement::{
-    NetApiBufferFree, NetLocalGroupAdd, NetLocalGroupAddMembers,
-    NetLocalGroupDel, NetLocalGroupGetInfo, NERR_GroupExists,
-    NERR_GroupNotFound, LOCALGROUP_INFO_1, LOCALGROUP_MEMBERS_INFO_0,
+    NetLocalGroupAdd, NetLocalGroupAddMembers, NetLocalGroupDel,
+    NERR_GroupExists, NERR_GroupNotFound, LOCALGROUP_INFO_1,
+    LOCALGROUP_MEMBERS_INFO_0,
 };
 use windows::Win32::NetworkManagement::WindowsFilteringPlatform::{
     FwpmEngineClose0, FwpmEngineOpen0, FwpmFilterAdd0,
@@ -329,29 +329,6 @@ pub fn delete_group(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// `Ok(true)` if the local group exists.
-pub fn group_exists(name: &str) -> Result<bool> {
-    unsafe {
-        let name_w = wstr(name);
-        let mut buf: *mut u8 = std::ptr::null_mut();
-        let rc = NetLocalGroupGetInfo(
-            PCWSTR::null(),
-            pcwstr(&name_w),
-            1,
-            &mut buf,
-        );
-        if rc == 0 {
-            let _ = NetApiBufferFree(Some(buf as *const c_void));
-            return Ok(true);
-        }
-        const ERROR_NO_SUCH_ALIAS: u32 = 1376;
-        if rc == NERR_GroupNotFound || rc == ERROR_NO_SUCH_ALIAS {
-            return Ok(false);
-        }
-        Err(anyhow!("NetLocalGroupGetInfo({name}): {rc}"))
-    }
-}
-
 // ────────────────────── filter enumeration ──────────────────────
 
 const ALE_LAYERS: [(GUID, &str); 2] = [
@@ -492,7 +469,17 @@ fn delete_tagged_filters(
             let rc = unsafe {
                 FwpmFilterEnum0(engine.h(), h, 256, &mut entries, &mut n)
             };
-            if rc != 0 || n == 0 {
+            if rc != 0 {
+                // Don't silently break: inside install_filters' txn,
+                // a swallowed enum error would skip stale-filter
+                // cleanup and the fresh six would be added on top,
+                // growing the set every install.
+                unsafe {
+                    let _ = FwpmFilterDestroyEnumHandle0(engine.h(), h);
+                }
+                return Err(anyhow!("FwpmFilterEnum0: 0x{rc:08x}"));
+            }
+            if n == 0 {
                 if !entries.is_null() {
                     unsafe {
                         FwpmFreeMemory0(&mut (entries as *mut c_void));
@@ -546,12 +533,13 @@ fn delete_tagged_filters(
         }
         for key in to_delete {
             let rc = unsafe { FwpmFilterDeleteByKey0(engine.h(), &key) };
-            if rc != 0 && rc != FWP_E_FILTER_NOT_FOUND {
+            if rc == 0 {
+                deleted += 1;
+            } else if rc != FWP_E_FILTER_NOT_FOUND {
                 return Err(anyhow!(
                     "FwpmFilterDeleteByKey0({key:?}): 0x{rc:08x}"
                 ));
             }
-            deleted += 1;
         }
     }
     Ok(deleted)
@@ -630,8 +618,10 @@ pub fn install_filters(
     }
 
     let result: Result<()> = (|| {
-        // Sublayer (idempotent).
-        let mut sl_name = wstr("sandbox-runtime-net");
+        // Sublayer (idempotent). The display name identifies the
+        // owning tool, not the group — one sublayer may carry filters
+        // for several groups/users.
+        let mut sl_name = wstr("srt-win");
         let mut sl_desc =
             wstr("sandbox-runtime WFP sublayer (deny-only-group fence)");
         let sl = FWPM_SUBLAYER0 {

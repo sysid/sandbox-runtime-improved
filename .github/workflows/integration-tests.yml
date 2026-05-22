@@ -64,8 +64,9 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          cargo build --release --manifest-path vendor/srt-win/Cargo.toml
-          cargo test  --release --manifest-path vendor/srt-win/Cargo.toml
+          cargo build  --release --manifest-path vendor/srt-win/Cargo.toml
+          cargo test   --release --manifest-path vendor/srt-win/Cargo.toml
+          cargo clippy --release --manifest-path vendor/srt-win/Cargo.toml --all-targets -- -D warnings
 
       - name: Smoke-test srt-win group + wfp lifecycle (Windows)
         if: matrix.os == 'windows'
@@ -74,58 +75,107 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $exe = "vendor\srt-win\target\release\srt-win.exe"
           $grp = "srt-ci-test"
+          $me  = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+          Write-Host "current user sid: $me"
 
-          & $exe group create --name $grp
-          if ($LASTEXITCODE -ne 0) { throw "group create failed" }
+          function Run([string[]]$argv) {
+            & $exe @argv
+            if ($LASTEXITCODE -ne 0) { throw "srt-win $($argv -join ' ') exited $LASTEXITCODE" }
+          }
+          function J([string[]]$argv) { Run $argv | ConvertFrom-Json }
 
-          $gs = & $exe group status --name $grp | ConvertFrom-Json
-          Write-Host "group status: $($gs | ConvertTo-Json -Compress)"
+          # ── group create (idempotent) ─────────────────────────────
+          Run @('group','create','--name',$grp)
+          Run @('group','create','--name',$grp)   # second call must succeed
+
+          $gs = J @('group','status','--name',$grp)
+          Write-Host "group status (--name): $($gs | ConvertTo-Json -Compress)"
           # No logout in CI, so the new group SID is not yet on the
           # runner's token. `created-not-on-token` is the expected
           # state here. (`ready` would also be acceptable on a runner
-          # whose image already carries the group, but that's not the
-          # case today.)
-          if ($gs.state -ne 'created-not-on-token' -and $gs.state -ne 'ready') {
+          # whose image already carries the group.)
+          if ($gs.state -notin 'created-not-on-token','ready') {
             throw "unexpected group state: $($gs.state)"
           }
           if (-not $gs.sid -or -not $gs.sid.StartsWith('S-1-')) {
             throw "group status did not return a SID"
           }
 
-          & $exe wfp install --name $grp
-          if ($LASTEXITCODE -ne 0) { throw "wfp install failed" }
+          # --group-sid path returns the same SID.
+          $gs2 = J @('group','status','--group-sid',$gs.sid)
+          if ($gs2.sid -ne $gs.sid) {
+            throw "--group-sid status sid mismatch: $($gs2.sid) vs $($gs.sid)"
+          }
+          # Unmapped SID via --group-sid reports absent (not
+          # created-not-on-token).
+          $gsBad = J @('group','status','--group-sid','S-1-5-21-1-2-3-9999999')
+          if ($gsBad.state -ne 'absent') {
+            throw "unmapped --group-sid expected absent, got $($gsBad.state)"
+          }
 
-          $ws = & $exe wfp status --name $grp | ConvertFrom-Json
+          # ── wfp: pre-install absent ───────────────────────────────
+          $pre = J @('wfp','status','--name',$grp)
+          if ($pre.state -ne 'absent') {
+            throw "pre-install wfp status expected absent, got $($pre.state)"
+          }
+
+          # First install via --name + explicit --user-sid.
+          Run @('wfp','install','--name',$grp,'--user-sid',$me)
+          $ws = J @('wfp','status','--name',$grp,'--user-sid',$me)
           Write-Host "wfp status: $($ws | ConvertTo-Json -Compress)"
-          if ($ws.state -ne 'installed') {
-            throw "wfp status expected 'installed', got '$($ws.state)'"
-          }
-          if ($ws.filters -lt 6) {
-            throw "expected >=6 filters, got $($ws.filters)"
-          }
+          if ($ws.state -ne 'installed') { throw "expected installed, got $($ws.state)" }
+          if ($ws.filters -lt 6)         { throw "expected >=6 filters, got $($ws.filters)" }
 
-          # Idempotency: a second install must succeed and leave the
-          # same number of filters.
-          & $exe wfp install --name $grp
-          if ($LASTEXITCODE -ne 0) { throw "second wfp install failed" }
-          $ws2 = & $exe wfp status --name $grp | ConvertFrom-Json
+          # Idempotency: second install via --group-sid path leaves
+          # the same filter count.
+          Run @('wfp','install','--group-sid',$gs.sid)
+          $ws2 = J @('wfp','status','--name',$grp)
           if ($ws2.filters -ne $ws.filters) {
             throw "idempotency: filter count changed $($ws.filters) -> $($ws2.filters)"
           }
 
-          & $exe wfp uninstall --all
-          if ($LASTEXITCODE -ne 0) { throw "wfp uninstall failed" }
-          $ws3 = & $exe wfp status --name $grp | ConvertFrom-Json
-          if ($ws3.state -ne 'absent') {
-            throw "post-uninstall state expected 'absent', got '$($ws3.state)'"
+          # ── --sublayer-guid isolation ─────────────────────────────
+          $altGuid = [guid]::NewGuid().ToString()
+          Run @('wfp','install','--name',$grp,'--sublayer-guid',$altGuid)
+          $alt = J @('wfp','status','--name',$grp,'--sublayer-guid',$altGuid)
+          if ($alt.state -ne 'installed') {
+            throw "alt sublayer expected installed, got $($alt.state)"
+          }
+          # Default sublayer is still its own thing.
+          $stillDefault = J @('wfp','status','--name',$grp)
+          if ($stillDefault.filters -ne $ws.filters) {
+            throw "default sublayer perturbed by alt install"
+          }
+          Run @('wfp','uninstall','--all','--sublayer-guid',$altGuid)
+          $altGone = J @('wfp','status','--name',$grp,'--sublayer-guid',$altGuid)
+          if ($altGone.state -ne 'absent') {
+            throw "alt sublayer expected absent after uninstall, got $($altGone.state)"
           }
 
-          & $exe group delete --name $grp
-          if ($LASTEXITCODE -ne 0) { throw "group delete failed" }
-          $gs2 = & $exe group status --name $grp | ConvertFrom-Json
-          if ($gs2.state -ne 'absent') {
-            throw "post-delete group state expected 'absent', got '$($gs2.state)'"
+          # ── teardown: per-user uninstall on default sublayer ──────
+          Run @('wfp','uninstall')
+          $post = J @('wfp','status','--name',$grp)
+          if ($post.state -ne 'absent') {
+            throw "post-uninstall expected absent, got $($post.state)"
           }
+
+          Run @('group','delete','--name',$grp)
+          $gd = J @('group','status','--name',$grp)
+          if ($gd.state -ne 'absent') {
+            throw "post-delete group expected absent, got $($gd.state)"
+          }
+
+      - name: Cleanup srt-win state (Windows)
+        if: always() && matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'SilentlyContinue'
+          $exe = "vendor\srt-win\target\release\srt-win.exe"
+          if (Test-Path $exe) {
+            & $exe wfp uninstall --all
+            & $exe group delete --name srt-ci-test
+          }
+          exit 0
 
       - name: Install system dependencies (Linux)
         if: matrix.os == 'linux'
