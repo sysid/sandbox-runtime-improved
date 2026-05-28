@@ -278,6 +278,51 @@ export const RipgrepConfigSchema = z.object({
 })
 
 /**
+ * Windows-specific configuration schema. See
+ * `windows-sandbox-utils.ts` for the install flow these settings
+ * must agree with.
+ */
+export const WindowsConfigSchema = z.object({
+  groupName: z
+    .string()
+    .min(1)
+    .default('sandbox-runtime-net')
+    .describe(
+      'Discriminator group name. Must match the group created at install ' +
+        'time. Ignored if groupSid is set.',
+    ),
+  groupSid: z
+    .string()
+    .regex(/^S-1-/, 'must be an S-1-… SID string')
+    .optional()
+    .describe(
+      'Discriminator group SID. Overrides groupName lookup — use for ' +
+        'domain groups or where name resolution is unreliable.',
+    ),
+  wfpSublayerGuid: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'WFP sublayer GUID under which the filters were installed. Omit to ' +
+        'use the srt-win compile-time default. Set this when filters were ' +
+        'installed by enterprise tooling under a custom sublayer.',
+    ),
+  proxyPortRange: z
+    .tuple([z.number().int().min(1), z.number().int().max(65535)])
+    .refine(([lo, hi]) => lo <= hi && hi - lo <= 64, {
+      message: 'low must be ≤ high and range width ≤ 64',
+    })
+    .optional()
+    .describe(
+      'Inclusive [low, high] port range the JS http/socks proxies bind ' +
+        'inside. MUST match the range passed to `srt-win wfp install ' +
+        '--proxy-port-range` (default 60080–60089) — the WFP loopback ' +
+        'permit only covers ports in that range.',
+    ),
+})
+
+/**
  * Seccomp configuration schema (Linux only)
  */
 export const SeccompConfigSchema = z.object({
@@ -351,6 +396,9 @@ export const SandboxRuntimeConfigSchema = z.object({
       'Linux only: absolute path to the socat binary. ' +
         'When set, this path is used directly instead of resolving "socat" via PATH.',
     ),
+  windows: WindowsConfigSchema.optional().describe(
+    'Windows-specific settings (group, WFP sublayer, proxy port range).',
+  ),
 })
 
 // Export inferred types
@@ -363,4 +411,5 @@ export type IgnoreViolationsConfig = z.infer<
 >
 export type RipgrepConfig = z.infer<typeof RipgrepConfigSchema>
 export type SeccompConfig = z.infer<typeof SeccompConfigSchema>
+export type WindowsConfig = z.infer<typeof WindowsConfigSchema>
 export type SandboxRuntimeConfig = z.infer<typeof SandboxRuntimeConfigSchema>
