@@ -207,40 +207,50 @@ try {
   $outRange.Stop()
 }
 
-# ── E5: --http-proxy / --socks-proxy reach the child's env ───────
-# `cmd /c set VAR` prints `VAR=value` if set, exits 1 if unset.
-# One Exec per var — no `&` chaining, so this row is independent
-# of the cmd-quoting behaviour exercised by E7.
-function Assert-Env {
+# ── E5: exec forwards the broker's env to the child verbatim ─────
+# Proxy config is single-sourced by the TS caller now: `srt-win exec`
+# has no --http-proxy/--socks-proxy flags and synthesizes nothing — it
+# forwards its OWN environment to the child. Prove that by setting the
+# proxy vars in THIS (broker) process and asserting the sandboxed child
+# sees the same values. `cmd /c set VAR` prints `VAR=value` if set,
+# exits 1 if unset. One Exec per var — no `&` chaining, so this row is
+# independent of the cmd-quoting behaviour exercised by E7.
+
+# Set $Var to $Value for the duration of $Body, then restore exactly
+# what was there before (including absence).
+function Invoke-WithEnv {
+  param([string]$Var, [string]$Value, [scriptblock]$Body)
+  $had = Test-Path "Env:$Var"
+  $old = if ($had) { (Get-Item "Env:$Var").Value } else { $null }
+  Set-Item -Path "Env:$Var" -Value $Value
+  try { & $Body }
+  finally {
+    if ($had) { Set-Item -Path "Env:$Var" -Value $old }
+    else { Remove-Item -Path "Env:$Var" -ErrorAction SilentlyContinue }
+  }
+}
+
+function Assert-EnvPassthrough {
   param([string]$Var, [string]$Want)
-  $r = Exec @('--http-proxy',"$PortLo",'--socks-proxy',"$($PortLo+1)",
-              '--', $cmd, '/c', "set $Var")
-  if ($r.exit -ne 0) {
-    throw "E5: 'set $Var' exited $($r.exit) (var unset?). out: $($r.out)"
-  }
-  $line = ($r.out -split "`r?`n" |
-           Where-Object { $_ -like "$Var=*" } |
-           Select-Object -First 1)
-  if ($line -ne "$Var=$Want") {
-    throw "E5: $Var expected '$Want', got '$line'. full: $($r.out)"
+  Invoke-WithEnv $Var $Want {
+    $r = Exec @('--', $cmd, '/c', "set $Var")
+    if ($r.exit -ne 0) {
+      throw "E5: 'set $Var' exited $($r.exit) (var unset in child?). out: $($r.out)"
+    }
+    $line = ($r.out -split "`r?`n" |
+             Where-Object { $_ -like "$Var=*" } |
+             Select-Object -First 1)
+    if ($line -ne "$Var=$Want") {
+      throw "E5: $Var expected '$Want', got '$line'. full: $($r.out)"
+    }
   }
 }
-Assert-Env 'HTTP_PROXY'  "http://127.0.0.1:$PortLo"
-Assert-Env 'HTTPS_PROXY' "http://127.0.0.1:$PortLo"
-Assert-Env 'ALL_PROXY'   "socks5h://127.0.0.1:$($PortLo+1)"
-# NO_PROXY: build_env_block writes it as an empty string, which
-# cmd.exe treats as undefined (`set X=` deletes X;
-# GetEnvironmentVariableW returns ERROR_ENVVAR_NOT_FOUND for an
-# empty-string entry). Either outcome is "blanked" — what we
-# must NOT see is a non-empty value carried through from the
-# broker's environment.
-$r = Exec @('--http-proxy',"$PortLo",'--', $cmd, '/c',
-            'if defined NO_PROXY (echo NO_PROXY=[%NO_PROXY%]) else (echo NO_PROXY-undef)')
-$np = $r.out.Trim()
-if ($np -ne 'NO_PROXY-undef' -and $np -ne 'NO_PROXY=[]') {
-  throw "E5: NO_PROXY not blanked (got '$np')"
-}
-Write-Host 'E5 ok: proxy env vars injected'
+# Values are arbitrary — this proves verbatim passthrough; the real
+# values come from the TS generateProxyEnvVars. NO_PROXY doubles as the
+# regression guard for the old exec blanking it.
+Assert-EnvPassthrough 'HTTPS_PROXY' "http://127.0.0.1:$PortLo"
+Assert-EnvPassthrough 'NO_PROXY'    'localhost,127.0.0.1'
+Write-Host 'E5 ok: exec forwards broker env (incl. proxy set) to child verbatim'
 
 # ── E6: self-protect — child cannot OpenProcess the broker ──────
 # `launch::run` exports the broker PID. The child P/Invokes

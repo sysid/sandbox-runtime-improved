@@ -261,10 +261,13 @@ async function main(): Promise<void> {
           // we keep the existing shell-string path.
           let child
           if (process.platform === 'win32') {
-            const argv = await SandboxManager.wrapWithSandboxArgv(command)
+            // env carries the proxy vars the sandboxed child must inherit.
+            const { argv, env } =
+              await SandboxManager.wrapWithSandboxArgv(command)
             child = spawn(argv[0], argv.slice(1), {
               shell: false,
               stdio: 'inherit',
+              env,
             })
           } else {
             const sandboxedCommand =

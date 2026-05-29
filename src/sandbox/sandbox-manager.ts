@@ -874,20 +874,24 @@ async function wrapWithSandbox(
 }
 
 /**
- * Wrap `command` for the sandbox and return an argv array suitable
- * for `spawn(argv[0], argv.slice(1), {shell: false})`.
+ * Wrap `command` for the sandbox and return a spawn descriptor:
+ * `{ argv, env }`, suitable for
+ * `spawn(argv[0], argv.slice(1), {shell: false, env})`.
  *
  * On Windows this is the ONLY supported wrap method (see
- * {@link wrapWithSandbox}). On macOS/Linux it returns
- * `[binShell, '-c', <wrapWithSandbox result>]` so callers can use
- * argv-spawn unconditionally.
+ * {@link wrapWithSandbox}); `env` carries the full proxy set that the
+ * sandboxed child inherits (`srt-win exec` forwards its environment
+ * verbatim — see {@link wrapCommandWithSandboxWindows}). On
+ * macOS/Linux `argv` is `[binShell, '-c', <wrapWithSandbox result>]`
+ * (proxy env is baked into that command) and `env` is the unchanged
+ * `process.env`, so callers can spawn uniformly across platforms.
  */
 async function wrapWithSandboxArgv(
   command: string,
   binShell?: string,
   customConfig?: Partial<SandboxRuntimeConfig>,
   abortSignal?: AbortSignal,
-): Promise<string[]> {
+): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }> {
   const platform = getPlatform()
 
   if (platform === 'windows') {
@@ -915,7 +919,7 @@ async function wrapWithSandboxArgv(
     abortSignal,
   )
   const shell = binShell ?? '/bin/bash'
-  return [shell, '-c', wrapped]
+  return { argv: [shell, '-c', wrapped], env: process.env }
 }
 
 /**
@@ -1272,7 +1276,7 @@ export interface ISandboxManager {
     binShell?: string,
     customConfig?: Partial<SandboxRuntimeConfig>,
     abortSignal?: AbortSignal,
-  ): Promise<string[]>
+  ): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }>
   getSandboxViolationStore(): SandboxViolationStore
   annotateStderrWithSandboxFailures(command: string, stderr: string): string
   getLinuxGlobPatternWarnings(): string[]

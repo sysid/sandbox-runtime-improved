@@ -3,6 +3,7 @@ import * as path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { logForDebugging } from '../utils/debug.js'
+import { generateProxyEnvVars } from './sandbox-utils.js'
 import type { SandboxDependencyCheck } from './linux-sandbox-utils.js'
 
 /**
@@ -64,9 +65,9 @@ export interface WindowsWfpStatusResult {
 export interface WindowsSandboxParams {
   command: string
   group: WindowsGroupRef
-  /** JS HTTP proxy port. Sets `HTTP_PROXY`/`HTTPS_PROXY` on the child. */
+  /** JS HTTP proxy port — fed to `generateProxyEnvVars` for the returned env. */
   httpProxyPort?: number
-  /** JS SOCKS proxy port. Sets `ALL_PROXY=socks5h://…` on the child. */
+  /** JS SOCKS proxy port — fed to `generateProxyEnvVars` for the returned env. */
   socksProxyPort?: number
   /**
    * Inner shell. `cmd` (default), `powershell`, or `pwsh`. The child's
@@ -434,24 +435,28 @@ export function createWindowsWfp(
 // ────────────────────────────────────────────────────────────────────
 
 /**
- * Build an argv array for spawning `command` inside the Windows
- * sandbox. Caller MUST spawn the result with `{shell: false}` — this
- * is the security boundary that keeps untrusted bytes off the host's
- * shell (the inner `cmd.exe /c` runs INSIDE the sandbox; see
+ * Build the spawn descriptor for running `command` inside the Windows
+ * sandbox: an `argv` array plus the `env` to spawn it with.
+ *
+ * Caller MUST spawn the result with `{shell: false}` — that is the
+ * security boundary that keeps untrusted bytes off the host's shell
+ * (the inner `cmd.exe /c` runs INSIDE the sandbox; see
  * `vendor/srt-win/src/launch.rs` `build_cmdline` for the passthrough
- * rationale).
+ * rationale) — AND with the returned `env`.
+ *
+ * Proxy configuration is single-sourced by {@link generateProxyEnvVars}
+ * (the same canonical builder used on macOS/Linux). `srt-win exec`
+ * takes no `--http-proxy` / `--socks-proxy` flags and synthesizes no
+ * proxy env; it forwards its own environment to the sandboxed child
+ * verbatim. So the full proxy set is merged over the broker's
+ * environment here and the child inherits it through the spawn.
  */
-export function wrapCommandWithSandboxWindows(
-  p: WindowsSandboxParams,
-): string[] {
+export function wrapCommandWithSandboxWindows(p: WindowsSandboxParams): {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+} {
   const exe = getSrtWinPath()
   const argv: string[] = [exe, 'exec', ...groupRefArgs(p.group)]
-  if (p.httpProxyPort !== undefined) {
-    argv.push('--http-proxy', String(p.httpProxyPort))
-  }
-  if (p.socksProxyPort !== undefined) {
-    argv.push('--socks-proxy', String(p.socksProxyPort))
-  }
   argv.push('--')
 
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
@@ -481,7 +486,32 @@ export function wrapCommandWithSandboxWindows(
       p.command,
     )
   }
-  return argv
+
+  // Generated proxy vars override any inherited ones so the child
+  // always routes through this sandbox's proxies.
+  const generated = envListToObject(
+    generateProxyEnvVars(p.httpProxyPort, p.socksProxyPort),
+  )
+  // TMPDIR is a POSIX path meant for the macOS/Linux FS sandbox — it
+  // serves no purpose on Windows and breaks msys2 tools (mktemp etc.).
+  delete generated.TMPDIR
+  const env: NodeJS.ProcessEnv = { ...process.env, ...generated }
+  return { argv, env }
+}
+
+/**
+ * Parse a list of `KEY=VALUE` strings (as produced by
+ * {@link generateProxyEnvVars}) into an object. Splits on the FIRST
+ * `=` only, so values containing `=` survive intact.
+ */
+function envListToObject(list: string[]): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {}
+  for (const entry of list) {
+    const eq = entry.indexOf('=')
+    if (eq === -1) continue
+    out[entry.slice(0, eq)] = entry.slice(eq + 1)
+  }
+  return out
 }
 
 // ────────────────────────────────────────────────────────────────────

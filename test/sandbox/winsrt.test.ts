@@ -85,13 +85,20 @@ function createTestConfig(
 async function runSandboxed(
   command: string,
   timeoutMs = 30_000,
+  extraEnv?: Record<string, string>,
 ): Promise<{
   stdout: string
   stderr: string
   status: number | null
 }> {
-  const argv = await SandboxManager.wrapWithSandboxArgv(command)
-  return spawnAsync(argv[0], argv.slice(1), { timeout: timeoutMs })
+  const { argv, env } = await SandboxManager.wrapWithSandboxArgv(command)
+  // The child inherits the proxy set via srt-win's environment, so the
+  // spawn MUST carry `env` — srt-win exec no longer injects proxy vars.
+  // `extraEnv` lets a row add tool-specific vars on top.
+  return spawnAsync(argv[0], argv.slice(1), {
+    timeout: timeoutMs,
+    env: extraEnv ? { ...env, ...extraEnv } : env,
+  })
 }
 
 type RunResult = { stdout: string; stderr: string; status: number | null }
@@ -108,10 +115,11 @@ async function runSandboxedUntil(
   ok: (r: RunResult) => boolean,
   attempts = 2,
   timeoutMs = 30_000,
+  extraEnv?: Record<string, string>,
 ): Promise<RunResult> {
   let last: RunResult = { stdout: '', stderr: '', status: null }
   for (let i = 0; i < attempts; i++) {
-    last = await runSandboxed(command, timeoutMs)
+    last = await runSandboxed(command, timeoutMs, extraEnv)
     if (ok(last)) return last
   }
   return last
@@ -369,24 +377,35 @@ describe.if(isWindows)('Windows sandbox: SandboxManager network', () => {
     )
   })
 
-  it('wrapWithSandboxArgv returns argv with proxy ports inside the range', async () => {
-    const argv = await SandboxManager.wrapWithSandboxArgv('echo hi')
+  it('wrapWithSandboxArgv returns argv + env carrying the full proxy set', async () => {
+    const { argv, env } = await SandboxManager.wrapWithSandboxArgv('echo hi')
     expect(argv[0]).toMatch(/srt-win\.exe$/i)
     expect(argv).toContain('exec')
     expect(argv).toContain('--group-sid')
     expect(argv[argv.indexOf('--group-sid') + 1]).toBe(ADMINS_SID)
 
-    const httpIdx = argv.indexOf('--http-proxy')
-    const socksIdx = argv.indexOf('--socks-proxy')
-    expect(httpIdx).toBeGreaterThan(0)
-    expect(socksIdx).toBeGreaterThan(0)
-    const httpPort = Number(argv[httpIdx + 1])
-    const socksPort = Number(argv[socksIdx + 1])
+    // Proxy ports are NO LONGER argv flags — srt-win exec is a pure
+    // passthrough; the proxy set rides in the returned env instead.
+    expect(argv).not.toContain('--http-proxy')
+    expect(argv).not.toContain('--socks-proxy')
+
+    // Standard proxy vars present and pointed at an in-range port.
+    const httpProxy = env.HTTP_PROXY ?? env.http_proxy
+    const allProxy = env.ALL_PROXY ?? env.all_proxy
+    expect(httpProxy).toMatch(/^http:\/\/.+:\d+$/)
+    expect(allProxy).toMatch(/^socks5h:\/\/.+:\d+$/)
+    const httpPort = Number(httpProxy!.split(':').pop())
+    const socksPort = Number(allProxy!.split(':').pop())
     expect(httpPort).toBeGreaterThanOrEqual(PORT_RANGE[0])
     expect(httpPort).toBeLessThanOrEqual(PORT_RANGE[1])
     expect(socksPort).toBeGreaterThanOrEqual(PORT_RANGE[0])
     expect(socksPort).toBeLessThanOrEqual(PORT_RANGE[1])
     expect(httpPort).not.toBe(socksPort)
+
+    // The FULL set rides along, not just the standard trio — assert an
+    // extra var from generateProxyEnvVars is present too.
+    expect(env.DOCKER_HTTP_PROXY).toMatch(/^http:\/\//)
+    expect(env.GRPC_PROXY ?? env.grpc_proxy).toMatch(/^socks5h:\/\//)
 
     // Last element is the user's command, passed verbatim to cmd /c.
     expect(argv.slice(-4)).toEqual(['/d', '/s', '/c', 'echo hi'])

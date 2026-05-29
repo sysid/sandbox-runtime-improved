@@ -102,17 +102,15 @@ enum Cmd {
     /// non-interactive desktop, applies process-mitigation
     /// policies + an explicit handle whitelist, and waits for it
     /// to exit. Propagates the child's exit code.
+    ///
+    /// The child inherits this process's environment verbatim — proxy
+    /// configuration is single-sourced by the caller, which sets the
+    /// proxy vars (TS `generateProxyEnvVars`) in the environment it
+    /// spawns `srt-win exec` with. There are intentionally no
+    /// `--http-proxy` / `--socks-proxy` flags and no proxy fallback.
     Exec {
         #[command(flatten)]
         group: GroupRef,
-        /// JS-side HTTP proxy port. Sets `HTTP_PROXY` /
-        /// `HTTPS_PROXY` (both cases) on the child.
-        #[arg(long)]
-        http_proxy: Option<u16>,
-        /// JS-side SOCKS proxy port. Sets `ALL_PROXY=socks5h://…`
-        /// (both cases) on the child.
-        #[arg(long)]
-        socks_proxy: Option<u16>,
         /// Skip the "is the group enabled in the broker's token"
         /// pre-flight. **Fail-open** — the WFP fence depends on
         /// that membership; with this set the child may run with
@@ -498,8 +496,6 @@ fn run() -> anyhow::Result<()> {
         // ─── exec ──────────────────────────────────────────────────
         Cmd::Exec {
             group,
-            http_proxy,
-            socks_proxy,
             skip_group_check,
             target,
         } => {
@@ -510,8 +506,6 @@ fn run() -> anyhow::Result<()> {
             let args = &target[1..];
             let spec = launch::ExecSpec {
                 group_sid: &gsid,
-                http_proxy,
-                socks_proxy,
                 skip_group_check,
                 target_exe: &exe,
                 target_args: args,
