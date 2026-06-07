@@ -18,16 +18,35 @@ This branch tracks changes on top of `main` from
 ### Rebase onto a new upstream version
 
 ```bash
-git fetch upstream
-git rebase upstream/main           # resolve conflicts; prefer upstream
+# 1. Fast-forward local `main` to `upstream/main` (no checkout).
+#    Refuses to run if `main` has diverged — fork work belongs on `sysid`.
+make sync-main
+
+# 2. Rebase `sysid` onto the new upstream tip.
+#    Conflict policy: prefer upstream; drop fork code superseded by it.
+git rebase upstream/main
+
+# 3. Bump the fork version to match the new upstream base.
 npm version <new_upstream>-sysid.1 --no-git-tag-version
-make update-readme-version         # syncs "currently based on upstream **vX.Y.Z**"
-make check                         # lint + typecheck + test
+
+# 4. Sync the upstream-version pointer in README.
+make update-readme-version
+
+# 5. Build first — integration tests spawn `dist/cli.js` and will fail otherwise.
+npm run build
+
+# 6. Lint + typecheck + test.
+make check
+
+# 7. Commit and push.
 git commit -am "chore: rebase onto upstream v<new_upstream>, bump fork version to <new_upstream>-sysid.1"
+git push origin main                  # the fast-forward from step 1
+git push --force-with-lease            # sysid — only after local verification
 ```
 
-The `/rebase-upstream` Claude Code skill automates the conflict-resolution rules
-(prefer upstream, drop `dist/`, preserve fork-only features).
+The `/rebase-upstream` Claude Code skill drives steps 1–6 (conflict-resolution
+rules, build-before-test ordering, verification). Step 7 is always manual —
+the skill never commits or pushes.
 
 ### Re-publish without an upstream change
 
