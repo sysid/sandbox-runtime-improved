@@ -15,6 +15,35 @@ This branch tracks changes on top of `main` from
 
 ## Releasing
 
+Two preconditions:
+
+1. Docker Desktop must be running — build-seccomp uses QEMU containers for both architectures
+2. npm login — check-npm-login fails fast if not
+
+If you only want individual stages: make publish (build + publish, no install), or npm install -g
+@sysid/sandbox-runtime-improved alone for the install. Don't confuse make install — that's just npm
+install for dev dependencies, not the global CLI install.
+
+```bash
+git commit -am "chore: rebase onto upstream v0.0.54, bump fork version to 0.0.54-sysid.1"
+git push origin main                  # fast-forwarded main
+git push --force-with-lease           # sysid (diverged: 56 vs 19 commits — expected after rebase)
+
+make all
+
+make all
+ └─ publish
+     ├─ check            # lint-check + typecheck + test
+     ├─ check-npm-login  # aborts if not logged into npm
+     ├─ build-seccomp    # Docker cross-compiles apply-seccomp (x64 + arm64)
+     ├─ clean            # rm -rf dist
+     ├─ build            # tsc
+     └─ npm publish --access public --tag latest
+         └─ prepublishOnly  # copies vendor/ into dist, aborts if seccomp binaries missing
+ └─ npm install -g @sysid/sandbox-runtime-improved   # installs what was just published
+
+```
+
 ### Rebase onto a new upstream version
 
 ```bash
