@@ -627,23 +627,17 @@ describe.if(isWindows)('Windows sandbox: SandboxManager network', () => {
   // ════════════════════════════════════════════════════════════════
   // Group D — the proxy port is not an open relay
   // ════════════════════════════════════════════════════════════════
-  // DESIGN NOTE / divergence from the donor: the donor's throwaway
-  // SOCKS proxy required a per-launch secret, so even a same-user
-  // host process was turned away at the handshake (donor D1/D2). Our
-  // shared JS proxy has NO secret — it filters by DESTINATION. So:
-  //   - a host (un-sandboxed, group-enabled) process CAN TCP-connect
-  //     to the proxy port (WFP filter-1 PERMITs it) — donor D1's
-  //     "connect fails" is therefore not reproduced;
-  //   - but the proxy refuses any destination not in allowedDomains,
-  //     regardless of caller — so it is never an open relay (D2).
-  // The host using the proxy to reach an ALLOWED host is harmless:
-  // the host user is unrestricted anyway.
+  // The shared JS proxy now requires a per-session secret (matching
+  // the donor's design): a host process without it is refused at the
+  // handshake. With the secret, the destination filter still applies.
 
   it.skipIf(!hasTool('curl'))(
     'D2: host curl --socks5 to proxy is not an open relay (disallowed host refused)',
     async () => {
       const socksPort = SandboxManager.getSocksProxyPort()
+      const token = SandboxManager.getProxyAuthToken()
       expect(socksPort).toBeGreaterThan(0)
+      expect(token).toBeTruthy()
 
       // Drive curl through the SOCKS proxy to a LOCAL responder via
       // ASYNC spawn. Two reasons this must NOT use spawnSync + a live
@@ -657,9 +651,11 @@ describe.if(isWindows)('Windows sandbox: SandboxManager network', () => {
       // 127.0.0.1 is exact-matched by the proxy's domain filter; this
       // is the network/allowlist live-swap path of updateConfig.
       SandboxManager.updateConfig(createTestConfig(['127.0.0.1']))
-      const socks = (host: string): string[] => [
+      const socks = (host: string, withAuth = true): string[] => [
         '--socks5-hostname',
-        `127.0.0.1:${socksPort}`,
+        withAuth
+          ? `srt:${token}@127.0.0.1:${socksPort}`
+          : `127.0.0.1:${socksPort}`,
         '-sS',
         '-m',
         '5',
@@ -670,6 +666,15 @@ describe.if(isWindows)('Windows sandbox: SandboxManager network', () => {
         host,
       ]
       try {
+        // Host process WITHOUT the secret → refused at the SOCKS
+        // handshake, never reaches the destination filter.
+        const noAuth = await spawnAsync(
+          'curl',
+          socks(`http://127.0.0.1:${l.port}`, false),
+          { timeout: 10_000 },
+        )
+        expect(noAuth.status).not.toBe(0)
+
         // Allowed dest (loopback responder) reached THROUGH the proxy →
         // proves the port is up and an allowlisted dest passes the
         // filter. All-loopback + ticking proxy = deterministic (no

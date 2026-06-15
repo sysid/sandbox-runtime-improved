@@ -69,6 +69,8 @@ export interface WindowsSandboxParams {
   httpProxyPort?: number
   /** JS SOCKS proxy port — fed to `generateProxyEnvVars` for the returned env. */
   socksProxyPort?: number
+  /** Per-session proxy auth token; embedded in proxy env URLs. */
+  proxyAuthToken?: string
   /**
    * Inner shell. `cmd` (default), `powershell`, or `pwsh`. The child's
    * post-`/c` content is **passthrough** — `&` chains, `"…"` quotes
@@ -490,7 +492,12 @@ export function wrapCommandWithSandboxWindows(p: WindowsSandboxParams): {
   // Generated proxy vars override any inherited ones so the child
   // always routes through this sandbox's proxies.
   const generated = envListToObject(
-    generateProxyEnvVars(p.httpProxyPort, p.socksProxyPort),
+    generateProxyEnvVars(
+      p.httpProxyPort,
+      p.socksProxyPort,
+      undefined,
+      p.proxyAuthToken,
+    ),
   )
   // TMPDIR is a POSIX path meant for the macOS/Linux FS sandbox — it
   // serves no purpose on Windows and breaks msys2 tools (mktemp etc.).

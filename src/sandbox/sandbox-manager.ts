@@ -940,6 +940,7 @@ async function wrapWithSandboxArgv(
       group: getWindowsGroupRef(),
       httpProxyPort: hasNetworkConfig ? getProxyPort() : undefined,
       socksProxyPort: hasNetworkConfig ? getSocksProxyPort() : undefined,
+      proxyAuthToken: hasNetworkConfig ? proxyAuthToken : undefined,
       binShell,
     })
   }
