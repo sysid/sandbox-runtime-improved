@@ -29,6 +29,8 @@ git commit -am "chore: rebase onto upstream v0.0.54, bump fork version to 0.0.54
 git push origin main                  # fast-forwarded main
 git push --force-with-lease           # sysid (diverged: 56 vs 19 commits — expected after rebase)
 
+npm login
+
 make all
 
 make all
