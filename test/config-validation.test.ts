@@ -540,7 +540,7 @@ describe('Config Validation', () => {
       expect(result.success).toBe(true)
     })
 
-    test('rejects per-entry injectHosts not present in allowedDomains', () => {
+    test('rejects per-entry injectHosts not reachable via allowedDomains', () => {
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
         network: {
@@ -611,6 +611,110 @@ describe('Config Validation', () => {
         },
       })
       expect(result.success).toBe(true)
+    })
+
+    test('accepts an exact injectHost covered by a wildcard allowedDomain', () => {
+      // The injectHosts ⊆ allowedDomains check is semantic coverage, not
+      // literal string membership — api.github.com is reachable via
+      // *.github.com, so this must validate.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['*.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['api.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('accepts a wildcard injectHost covered by a broader allowed wildcard', () => {
+      // Every host under *.api.github.com is also under *.github.com.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['*.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['*.api.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects a wildcard injectHost not covered by an exact allowedDomain', () => {
+      // *.github.com would inject at gist.github.com, which is not
+      // reachable when allowedDomains only contains api.github.com.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['*.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(i =>
+          i.path.join('.').startsWith('credentials.envVars.0.injectHosts'),
+        )
+        expect(issue?.message).toContain('*.github.com')
+        expect(issue?.message).toContain('not reachable')
+      }
+    })
+
+    test('rejects an exact injectHost not covered by an unrelated wildcard', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['*.example.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['api.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(i =>
+          i.path.join('.').startsWith('credentials.envVars.0.injectHosts'),
+        )
+        expect(issue?.message).toContain('api.github.com')
+        expect(issue?.message).toContain('not reachable')
+      }
     })
 
     test('rejects unknown modes', () => {

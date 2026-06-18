@@ -52,9 +52,8 @@ import {
   isValidHost,
   redactUrl,
   resolveParentProxy,
-  stripBrackets,
 } from './parent-proxy.js'
-import { isIP } from 'node:net'
+import { matchesDomainPattern } from './domain-pattern.js'
 import type { ChildProcess } from 'node:child_process'
 import type { ResolvedParentProxy } from './parent-proxy.js'
 import { EOL } from 'node:os'
@@ -105,26 +104,6 @@ function registerCleanup(): void {
   process.once('SIGINT', cleanupHandler)
   process.once('SIGTERM', cleanupHandler)
   cleanupRegistered = true
-}
-
-function matchesDomainPattern(hostname: string, pattern: string): boolean {
-  const h = hostname.toLowerCase()
-  // Bare '*' is deny-all when it appears in deniedDomains. The schema only
-  // accepts it there (allowedDomains still rejects it as too broad).
-  if (pattern === '*') return true
-  // Support wildcard patterns like *.example.com. Never apply wildcard
-  // suffix matching to IP literals — an IPv6 zone-ID payload like
-  // `::ffff:1.2.3.4%x.allowed.com` would otherwise pass .endsWith() while
-  // the OS connects to the bare IP. isValidHost already rejects `%`, but
-  // we refuse here too for defence in depth.
-  if (pattern.startsWith('*.')) {
-    if (isIP(stripBrackets(h))) return false
-    const baseDomain = pattern.substring(2).toLowerCase()
-    return h.endsWith('.' + baseDomain)
-  }
-
-  // Exact match for non-wildcard patterns
-  return h === pattern.toLowerCase()
 }
 
 async function filterNetworkRequest(

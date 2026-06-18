@@ -7,6 +7,7 @@ import type { FilterRequestCallback } from './request-filter.js'
 
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'
+import { isInjectHostCoveredByAllowedDomains } from './domain-pattern.js'
 
 /**
  * Schema for domain patterns (e.g., "example.com", "*.npmjs.org")
@@ -534,23 +535,24 @@ export const SandboxRuntimeConfigSchema = z
     const creds = cfg.credentials
     if (!creds) return
 
-    // Every per-entry injectHosts pattern must be reachable, i.e. literally
-    // present in allowedDomains, so the config is explicit about which
-    // destinations may receive a real credential.
-    const allowed = new Set(cfg.network.allowedDomains)
+    // Every per-entry injectHosts pattern must be reachable via
+    // allowedDomains — semantic (wildcard-aware) coverage, not literal
+    // string membership, so `injectHosts: ['api.github.com']` is accepted
+    // when `allowedDomains: ['*.github.com']`.
+    const allowed = cfg.network.allowedDomains
     const checkSubset = (
       hosts: readonly string[],
       path: (string | number)[],
     ) => {
       for (const [i, host] of hosts.entries()) {
-        if (!allowed.has(host)) {
+        if (!isInjectHostCoveredByAllowedDomains(host, allowed)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: [...path, i],
             message:
-              `injectHosts entry "${host}" is not in network.allowedDomains. ` +
-              'Credential injection is only permitted to destinations the ' +
-              'sandbox is already allowed to reach.',
+              `injectHosts entry "${host}" is not reachable via ` +
+              `network.allowedDomains — add "${host}" (or a covering ` +
+              `wildcard) to allowedDomains, or remove it from injectHosts.`,
           })
         }
       }
