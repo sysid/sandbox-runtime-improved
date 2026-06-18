@@ -421,7 +421,6 @@ describe('Config Validation', () => {
         },
         credentials: {
           envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
-          injectHosts: ['api.github.com'],
         },
       })
       expect(result.success).toBe(true)
@@ -433,7 +432,6 @@ describe('Config Validation', () => {
         network: { allowedDomains: ['api.github.com'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
-          injectHosts: ['api.github.com'],
         },
       })
       expect(result.success).toBe(false)
@@ -450,7 +448,6 @@ describe('Config Validation', () => {
         network: { allowedDomains: ['api.github.com'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
-          injectHosts: ['api.github.com'],
           allowPlaintextInject: true,
         },
       })
@@ -458,9 +455,9 @@ describe('Config Validation', () => {
     })
 
     test('accepts a masked env var with no injectHosts (defaults to allowedDomains)', () => {
-      // Neither per-entry nor block-level injectHosts — the credential
-      // defaults to network.allowedDomains (injection at every reachable
-      // host). injectHosts is now an optional narrowing.
+      // No per-entry injectHosts — the credential defaults to
+      // network.allowedDomains (injection at every reachable host).
+      // injectHosts is an optional narrowing.
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
         network: {
@@ -485,11 +482,10 @@ describe('Config Validation', () => {
         },
         credentials: {
           envVars: [{ name: 'GH_TOKEN', mode: 'mask', injectHosts: [] }],
-          injectHosts: ['api.github.com'],
         },
       })
-      // An explicit empty list is an override, not "inherit" — it would
-      // mean "mask but never inject", which is self-contradictory.
+      // An explicit empty list would mean "mask but never inject", which
+      // is self-contradictory.
       expect(result.success).toBe(false)
       if (!result.success) {
         const messages = result.error.issues.map(i => i.message).join('\n')
@@ -498,7 +494,7 @@ describe('Config Validation', () => {
       }
     })
 
-    test('a masked env var inherits block-level injectHosts when it has none', () => {
+    test('rejects block-level credentials.injectHosts (removed key)', () => {
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
         network: {
@@ -511,10 +507,19 @@ describe('Config Validation', () => {
           injectHosts: ['api.github.com'],
         },
       })
-      expect(result.success).toBe(true)
+      // The block-level default no longer exists; the schema is strict so
+      // a stale config fails rather than silently widening the credential
+      // to every allowedDomain.
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(
+          i => i.path.join('.') === 'credentials',
+        )
+        expect(issue?.message).toContain('injectHosts')
+      }
     })
 
-    test('per-entry injectHosts satisfies the requirement without a block-level default', () => {
+    test('accepts a masked env var with per-entry injectHosts', () => {
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
         network: {
@@ -587,28 +592,7 @@ describe('Config Validation', () => {
       expect(result.success).toBe(true)
     })
 
-    test('rejects injectHosts entries not present in allowedDomains', () => {
-      const result = SandboxRuntimeConfigSchema.safeParse({
-        ...base,
-        network: {
-          allowedDomains: ['api.github.com'],
-          deniedDomains: [],
-          tlsTerminate: {},
-        },
-        credentials: {
-          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
-          injectHosts: ['api.github.com', 'evil.example.com'],
-        },
-      })
-      expect(result.success).toBe(false)
-      if (!result.success) {
-        const messages = result.error.issues.map(i => i.message).join('\n')
-        expect(messages).toContain('evil.example.com')
-        expect(messages).toContain('network.allowedDomains')
-      }
-    })
-
-    test('accepts injectHosts that are a subset of allowedDomains', () => {
+    test('accepts per-entry injectHosts that are a subset of allowedDomains', () => {
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
         network: {
@@ -617,23 +601,16 @@ describe('Config Validation', () => {
           tlsTerminate: {},
         },
         credentials: {
-          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
-          injectHosts: ['api.github.com', '*.amazonaws.com'],
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['api.github.com', '*.amazonaws.com'],
+            },
+          ],
         },
       })
       expect(result.success).toBe(true)
-    })
-
-    test('rejects overly-broad wildcards in injectHosts', () => {
-      const result = SandboxRuntimeConfigSchema.safeParse({
-        ...base,
-        network: { ...base.network, tlsTerminate: {} },
-        credentials: {
-          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
-          injectHosts: ['*.com'],
-        },
-      })
-      expect(result.success).toBe(false)
     })
 
     test('rejects unknown modes', () => {

@@ -621,14 +621,13 @@ function getCredentialRestrictions(
     } else if (v.mode === 'mask') {
       const real = process.env[v.name]
       if (real === undefined) continue
-      // Effective injectHosts: per-entry overrides block-level; if neither
-      // is set, default to every reachable host (network.allowedDomains).
-      // injectHosts is an *optional narrowing*, not a required allowlist.
-      // Trade-off: a masked credential with no injectHosts is injectable
-      // at every host the sandbox can reach — narrow it explicitly when
-      // the credential should only go to a subset.
-      const injectHosts =
-        v.injectHosts ?? credentials.injectHosts ?? allowedDomains ?? []
+      // Effective injectHosts: per-entry narrows; if unset, default to
+      // every reachable host (network.allowedDomains). injectHosts is an
+      // *optional narrowing*, not a required allowlist. Trade-off: a
+      // masked credential with no injectHosts is injectable at every host
+      // the sandbox can reach — narrow it explicitly when the credential
+      // should only go to a subset.
+      const injectHosts = v.injectHosts ?? allowedDomains ?? []
       setEnvVars[v.name] = sentinelRegistry.register(v.name, real, injectHosts)
     }
   }

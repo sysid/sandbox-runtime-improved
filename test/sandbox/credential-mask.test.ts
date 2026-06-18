@@ -373,12 +373,10 @@ describe.if(isLinux)('env masking on Linux (bwrap)', () => {
     await SandboxManager.initialize(
       baseConfig({
         // injectHosts is unused here (this block tests env-side masking
-        // only); set explicitly so the registry's per-credential host
-        // gating is exercised independent of allowedDomains.
+        // only); the credential defaults to allowedDomains.
         network: { allowedDomains: ['localhost'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: MASKED_VAR, mode: 'mask' }],
-          injectHosts: ['localhost'],
           allowPlaintextInject: true,
         },
       }),
@@ -409,7 +407,6 @@ describe.if(isLinux)('env masking on Linux (bwrap)', () => {
         network: { allowedDomains: ['localhost'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: 'SRT_TEST_NEVER_SET', mode: 'mask' }],
-          injectHosts: ['localhost'],
           allowPlaintextInject: true,
         },
       }),
@@ -425,7 +422,6 @@ describe.if(isLinux)('env masking on Linux (bwrap)', () => {
         network: { allowedDomains: ['localhost'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: MASKED_VAR, mode: 'mask' }],
-          injectHosts: ['localhost'],
           allowPlaintextInject: true,
         },
       }),
@@ -458,7 +454,6 @@ describe.if(isLinux)('env masking on Linux (bwrap)', () => {
         network: { allowedDomains: ['localhost'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: MASKED_VAR, mode: 'mask' }],
-          injectHosts: ['localhost'],
           allowPlaintextInject: true,
         },
       }),
@@ -495,8 +490,9 @@ describe.if(isLinux)('end-to-end credential masking via SandboxManager', () => {
       network: { allowedDomains: ['localhost'], deniedDomains: [] },
       filesystem: { denyRead: [], allowWrite: ['/tmp'], denyWrite: [] },
       credentials: {
-        envVars: [{ name: MASKED_VAR, mode: 'mask' }],
-        injectHosts: ['localhost'],
+        envVars: [
+          { name: MASKED_VAR, mode: 'mask', injectHosts: ['localhost'] },
+        ],
         allowPlaintextInject: true,
       },
     })
@@ -557,8 +553,9 @@ describe.if(isLinux)('end-to-end credential masking via SandboxManager', () => {
       },
       filesystem: { denyRead: [], allowWrite: ['/tmp'], denyWrite: [] },
       credentials: {
-        envVars: [{ name: MASKED_VAR, mode: 'mask' }],
-        injectHosts: ['api.github.com'],
+        envVars: [
+          { name: MASKED_VAR, mode: 'mask', injectHosts: ['api.github.com'] },
+        ],
         allowPlaintextInject: true,
       },
     })
@@ -585,11 +582,11 @@ describe.if(isLinux)('end-to-end credential masking via SandboxManager', () => {
 })
 
 /**
- * Per-credential injectHosts through SandboxManager: GH_TOKEN inherits the
- * block-level default (localhost), NPM_TOKEN overrides with its own host.
- * Each sentinel only swaps at its own credential's effective injectHosts —
- * sending GH_TOKEN's sentinel to NPM_TOKEN's host (or vice versa) must NOT
- * substitute, even though both hosts are allowlisted.
+ * Per-credential injectHosts through SandboxManager: GH_TOKEN and NPM_TOKEN
+ * each declare their own per-entry injectHosts. Each sentinel only swaps at
+ * its own credential's injectHosts — sending GH_TOKEN's sentinel to
+ * NPM_TOKEN's host (or vice versa) must NOT substitute, even though both
+ * hosts are allowlisted.
  */
 describe.if(isLinux)('per-credential injectHosts via SandboxManager', () => {
   const GH_VAR = 'SRT_TEST_GH_TOKEN'
@@ -633,12 +630,11 @@ describe.if(isLinux)('per-credential injectHosts via SandboxManager', () => {
       network: { allowedDomains: [GH_HOST, NPM_HOST], deniedDomains: [] },
       filesystem: { denyRead: [], allowWrite: ['/tmp'], denyWrite: [] },
       credentials: {
-        // GH_TOKEN inherits the block-level default; NPM_TOKEN overrides.
+        // Each credential narrows to its own host via per-entry injectHosts.
         envVars: [
-          { name: GH_VAR, mode: 'mask' },
+          { name: GH_VAR, mode: 'mask', injectHosts: [GH_HOST] },
           { name: NPM_VAR, mode: 'mask', injectHosts: [NPM_HOST] },
         ],
-        injectHosts: [GH_HOST],
         allowPlaintextInject: true,
       },
     })
@@ -663,7 +659,7 @@ describe.if(isLinux)('per-credential injectHosts via SandboxManager', () => {
     expect(SandboxManager.getSentinelRegistry().size).toBe(2)
   })
 
-  test('inherited block-level host swaps the GH sentinel', async () => {
+  test('GH sentinel swaps at its own per-entry injectHost', async () => {
     ghHeaders = undefined
     const r = await curlViaProxy(proxyPort, `http://${GH_HOST}:${ghPort}/`, {
       headers: ['Authorization: Bearer ' + ghSentinel],
@@ -673,7 +669,7 @@ describe.if(isLinux)('per-credential injectHosts via SandboxManager', () => {
     expect(ghHeaders?.authorization).toBe(`Bearer ${GH_REAL}`)
   }, 20000)
 
-  test('per-entry override swaps the NPM sentinel only at its own host', async () => {
+  test('NPM sentinel swaps only at its own per-entry injectHost', async () => {
     npmHeaders = undefined
     const r = await curlViaProxy(proxyPort, `http://${NPM_HOST}:${npmPort}/`, {
       headers: ['Authorization: Bearer ' + npmSentinel],
@@ -683,8 +679,8 @@ describe.if(isLinux)('per-credential injectHosts via SandboxManager', () => {
     expect(r.exit).toBe(0)
     expect(npmHeaders?.authorization).toBe(`Bearer ${NPM_REAL}`)
 
-    // The block-level default does NOT apply to an entry with its own
-    // injectHosts: NPM's sentinel sent to GH_HOST stays a fake.
+    // Per-entry injectHosts is exclusive: NPM's sentinel sent to GH_HOST
+    // (not in NPM's list) stays a fake.
     ghHeaders = undefined
     const r2 = await curlViaProxy(proxyPort, `http://${GH_HOST}:${ghPort}/`, {
       headers: ['Authorization: Bearer ' + npmSentinel],
@@ -709,7 +705,7 @@ describe.if(isLinux)('per-credential injectHosts via SandboxManager', () => {
 })
 
 /**
- * No injectHosts at either level → defaults to network.allowedDomains.
+ * No per-entry injectHosts → defaults to network.allowedDomains.
  * injectHosts is an optional narrowing; absent it, the credential is
  * injectable at *every* host the sandbox can reach. The second test
  * makes the security implication explicit.
@@ -757,7 +753,7 @@ describe.if(isLinux)(
         filesystem: { denyRead: [], allowWrite: ['/tmp'], denyWrite: [] },
         credentials: {
           envVars: [{ name: VAR, mode: 'mask' }],
-          // No injectHosts at either level.
+          // No per-entry injectHosts → defaults to allowedDomains.
           allowPlaintextInject: true,
         },
       })

@@ -174,11 +174,9 @@ export const CredentialEnvVarConfigSchema = z.object({
     .optional()
     .describe(
       'Optional narrowing of where the proxy substitutes this credential. ' +
-        'Overrides the block-level credentials.injectHosts default for ' +
-        'this entry only. If neither this nor the block-level default is ' +
-        'set, the credential is injected at every host in ' +
-        'network.allowedDomains. Only meaningful when mode is "mask"; ' +
-        'accepted but ignored for "deny".',
+        'If unset, defaults to network.allowedDomains — the credential is ' +
+        'injected at every reachable host. Only meaningful when mode is ' +
+        '"mask"; accepted but ignored for "deny".',
     ),
 })
 
@@ -195,37 +193,29 @@ export const CredentialEnvVarConfigSchema = z.object({
  * Only the sources declared here are affected; the section applies no
  * implicit restrictions beyond them.
  */
-export const CredentialsConfigSchema = z.object({
-  files: z
-    .array(CredentialFileConfigSchema)
-    .optional()
-    .describe('Credential files or directories to protect'),
-  envVars: z
-    .array(CredentialEnvVarConfigSchema)
-    .optional()
-    .describe('Environment variables to protect'),
-  injectHosts: z
-    .array(domainPatternSchema)
-    .optional()
-    .describe(
-      'Optional narrowing of where sentinel→real substitution happens. A ' +
-        'masked env var without its own injectHosts inherits this list; ' +
-        'per-entry injectHosts overrides it. If unset at both levels, the ' +
-        'credential is injected at every host in network.allowedDomains. ' +
-        'Must be a subset of network.allowedDomains. Substitution runs ' +
-        'only on the TLS-terminated proxy path unless allowPlaintextInject ' +
-        'is set.',
-    ),
-  allowPlaintextInject: z
-    .boolean()
-    .optional()
-    .describe(
-      'Allow sentinel→real substitution on the plain-HTTP proxy path. ' +
-        'Defaults to false: without TLS termination the upstream identity ' +
-        'is unverified and the credential travels in cleartext. Set only ' +
-        'for trusted-network test fixtures.',
-    ),
-})
+export const CredentialsConfigSchema = z
+  .object({
+    files: z
+      .array(CredentialFileConfigSchema)
+      .optional()
+      .describe('Credential files or directories to protect'),
+    envVars: z
+      .array(CredentialEnvVarConfigSchema)
+      .optional()
+      .describe('Environment variables to protect'),
+    allowPlaintextInject: z
+      .boolean()
+      .optional()
+      .describe(
+        'Allow sentinel→real substitution on the plain-HTTP proxy path. ' +
+          'Defaults to false: without TLS termination the upstream identity ' +
+          'is unverified and the credential travels in cleartext. Set only ' +
+          'for trusted-network test fixtures.',
+      ),
+  })
+  // Reject unknown keys so a stale `credentials.injectHosts` (the removed
+  // block-level default) fails loudly instead of being silently stripped.
+  .strict()
 
 /**
  * Network configuration schema for validation
@@ -544,10 +534,9 @@ export const SandboxRuntimeConfigSchema = z
     const creds = cfg.credentials
     if (!creds) return
 
-    // Every injectHosts entry — block-level default and per-entry overrides
-    // alike — must be reachable, i.e. literally present in allowedDomains,
-    // so the config is explicit about which destinations may receive a real
-    // credential.
+    // Every per-entry injectHosts pattern must be reachable, i.e. literally
+    // present in allowedDomains, so the config is explicit about which
+    // destinations may receive a real credential.
     const allowed = new Set(cfg.network.allowedDomains)
     const checkSubset = (
       hosts: readonly string[],
@@ -566,15 +555,12 @@ export const SandboxRuntimeConfigSchema = z
         }
       }
     }
-    if (creds.injectHosts) {
-      checkSubset(creds.injectHosts, ['credentials', 'injectHosts'])
-    }
 
     // Per-credential checks. Substitution is gated per sentinel; an entry
-    // with no per-entry or block-level injectHosts defaults to
-    // network.allowedDomains (every reachable host), so absence is fine.
-    // An *explicit* empty list is rejected — "mask but never inject" is
-    // self-contradictory and almost certainly a config mistake.
+    // with no injectHosts defaults to network.allowedDomains (every
+    // reachable host), so absence is fine. An *explicit* empty list is
+    // rejected — "mask but never inject" is self-contradictory and almost
+    // certainly a config mistake.
     let hasMaskedEnv = false
     for (const [idx, v] of (creds.envVars ?? []).entries()) {
       if (v.injectHosts) {
@@ -587,8 +573,7 @@ export const SandboxRuntimeConfigSchema = z
       }
       if (v.mode !== 'mask') continue
       hasMaskedEnv = true
-      const effective = v.injectHosts ?? creds.injectHosts
-      if (effective !== undefined && effective.length === 0) {
+      if (v.injectHosts !== undefined && v.injectHosts.length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['credentials', 'envVars', idx],
