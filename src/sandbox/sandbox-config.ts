@@ -116,18 +116,27 @@ const ParentProxyConfigSchema = z.object({
  *
  * - `deny` — the sandboxed process cannot read the file / does not see the
  *   environment variable.
- * - `mask` — reserved for credential masking; rejected until masking ships.
- *
- * Additional modes (e.g. a working `mask`) will be added in future releases.
+ * - `mask` — the sandboxed process sees a per-session sentinel value; the
+ *   host proxy substitutes sentinel→real on egress to `injectHosts`.
+ *   Currently supported for env vars only; rejected for files until file
+ *   masking ships.
  */
-const credentialModeSchema = z
-  .enum(['deny', 'mask'])
-  .refine(mode => mode !== 'mask', {
+const credentialModeSchema = z.enum(['deny', 'mask'])
+
+/**
+ * Mode schema for credential files. `mask` is reserved but rejected until
+ * file masking ships, so a config can never request behaviour that isn't
+ * wired yet.
+ */
+const credentialFileModeSchema = credentialModeSchema.refine(
+  mode => mode !== 'mask',
+  {
     message:
-      'Credential mode "mask" is not supported yet. Use "deny" to block the ' +
-      'credential inside the sandbox, or omit the entry to leave it ' +
-      'unrestricted; masking will be added in a future release.',
-  })
+      'Credential mode "mask" is not supported for files yet. Use "deny" ' +
+      'to block the file inside the sandbox; file masking will be added in ' +
+      'a future release. (Env var masking is supported.)',
+  },
+)
 
 /**
  * Schema for an environment variable name. Restricted to POSIX identifiers so
@@ -149,7 +158,7 @@ export const CredentialFileConfigSchema = z.object({
     'Path to a credential file or directory. Supports the same path forms as ' +
       'filesystem.denyRead (absolute paths and ~ expansion).',
   ),
-  mode: credentialModeSchema.describe('Access mode for this path'),
+  mode: credentialFileModeSchema.describe('Access mode for this path'),
 })
 
 /**
@@ -184,6 +193,24 @@ export const CredentialsConfigSchema = z.object({
     .array(CredentialEnvVarConfigSchema)
     .optional()
     .describe('Environment variables to protect'),
+  injectHosts: z
+    .array(domainPatternSchema)
+    .optional()
+    .describe(
+      'Destination hosts on which the proxy substitutes sentinel→real for ' +
+        'masked credentials. Must be a subset of network.allowedDomains. ' +
+        'Substitution runs only on the TLS-terminated proxy path unless ' +
+        'allowPlaintextInject is set.',
+    ),
+  allowPlaintextInject: z
+    .boolean()
+    .optional()
+    .describe(
+      'Allow sentinel→real substitution on the plain-HTTP proxy path. ' +
+        'Defaults to false: without TLS termination the upstream identity ' +
+        'is unverified and the credential travels in cleartext. Set only ' +
+        'for trusted-network test fixtures.',
+    ),
 })
 
 /**
@@ -426,78 +453,119 @@ export const SeccompConfigSchema = z.object({
 /**
  * Main configuration schema for Sandbox Runtime validation
  */
-export const SandboxRuntimeConfigSchema = z.object({
-  network: NetworkConfigSchema.describe('Network restrictions configuration'),
-  filesystem: FilesystemConfigSchema.describe(
-    'Filesystem restrictions configuration',
-  ),
-  credentials: CredentialsConfigSchema.optional().describe(
-    'Credential handling configuration. Only the explicitly declared files ' +
-      'and environment variables are restricted.',
-  ),
-  ignoreViolations: IgnoreViolationsConfigSchema.optional().describe(
-    'Optional configuration for ignoring specific violations',
-  ),
-  enableWeakerNestedSandbox: z
-    .boolean()
-    .optional()
-    .describe('Enable weaker nested sandbox mode (for Docker environments)'),
-  enableWeakerNetworkIsolation: z
-    .boolean()
-    .optional()
-    .describe(
-      'Enable weaker network isolation to allow access to com.apple.trustd.agent (macOS only). ' +
-        'This is needed for Go programs (gh, gcloud, terraform, kubectl, etc.) to verify TLS certificates ' +
-        'when using httpProxyPort with a MITM proxy and custom CA. Enabling this opens a potential data ' +
-        'exfiltration vector through the trustd service. Only enable if you need Go TLS verification.',
+export const SandboxRuntimeConfigSchema = z
+  .object({
+    network: NetworkConfigSchema.describe('Network restrictions configuration'),
+    filesystem: FilesystemConfigSchema.describe(
+      'Filesystem restrictions configuration',
     ),
-  allowAppleEvents: z
-    .boolean()
-    .optional()
-    .describe(
-      'Allow sending Apple Events and Launch Services open requests from the sandbox (macOS only). ' +
-        'Needed for open, osascript, and anything that opens URLs or scripts other apps via AppleScript. ' +
-        'This removes code-execution isolation: sandboxed commands can launch other applications ' +
-        'unsandboxed with no user prompt (launched apps are not subject to the sandbox filesystem or ' +
-        'network restrictions), and can script running apps subject to TCC automation consent. ' +
-        'Default: false.',
+    credentials: CredentialsConfigSchema.optional().describe(
+      'Credential handling configuration. Only the explicitly declared files ' +
+        'and environment variables are restricted.',
     ),
-  ripgrep: RipgrepConfigSchema.optional().describe(
-    'Custom ripgrep configuration (default: { command: "rg" })',
-  ),
-  mandatoryDenySearchDepth: z
-    .number()
-    .int()
-    .min(1)
-    .max(10)
-    .optional()
-    .describe(
-      'Maximum directory depth to search for dangerous files on Linux (default: 3). ' +
-        'Higher values provide more protection but slower performance.',
+    ignoreViolations: IgnoreViolationsConfigSchema.optional().describe(
+      'Optional configuration for ignoring specific violations',
     ),
-  allowPty: z
-    .boolean()
-    .optional()
-    .describe('Allow pseudo-terminal (pty) operations (macOS only)'),
-  seccomp: SeccompConfigSchema.optional().describe(
-    'Custom seccomp binary paths (Linux only).',
-  ),
-  bwrapPath: binaryPathSchema
-    .optional()
-    .describe(
-      'Linux only: absolute path to the bwrap (bubblewrap) binary. ' +
-        'When set, this path is used directly instead of resolving "bwrap" via PATH.',
+    enableWeakerNestedSandbox: z
+      .boolean()
+      .optional()
+      .describe('Enable weaker nested sandbox mode (for Docker environments)'),
+    enableWeakerNetworkIsolation: z
+      .boolean()
+      .optional()
+      .describe(
+        'Enable weaker network isolation to allow access to com.apple.trustd.agent (macOS only). ' +
+          'This is needed for Go programs (gh, gcloud, terraform, kubectl, etc.) to verify TLS certificates ' +
+          'when using httpProxyPort with a MITM proxy and custom CA. Enabling this opens a potential data ' +
+          'exfiltration vector through the trustd service. Only enable if you need Go TLS verification.',
+      ),
+    allowAppleEvents: z
+      .boolean()
+      .optional()
+      .describe(
+        'Allow sending Apple Events and Launch Services open requests from the sandbox (macOS only). ' +
+          'Needed for open, osascript, and anything that opens URLs or scripts other apps via AppleScript. ' +
+          'This removes code-execution isolation: sandboxed commands can launch other applications ' +
+          'unsandboxed with no user prompt (launched apps are not subject to the sandbox filesystem or ' +
+          'network restrictions), and can script running apps subject to TCC automation consent. ' +
+          'Default: false.',
+      ),
+    ripgrep: RipgrepConfigSchema.optional().describe(
+      'Custom ripgrep configuration (default: { command: "rg" })',
     ),
-  socatPath: binaryPathSchema
-    .optional()
-    .describe(
-      'Linux only: absolute path to the socat binary. ' +
-        'When set, this path is used directly instead of resolving "socat" via PATH.',
+    mandatoryDenySearchDepth: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .optional()
+      .describe(
+        'Maximum directory depth to search for dangerous files on Linux (default: 3). ' +
+          'Higher values provide more protection but slower performance.',
+      ),
+    allowPty: z
+      .boolean()
+      .optional()
+      .describe('Allow pseudo-terminal (pty) operations (macOS only)'),
+    seccomp: SeccompConfigSchema.optional().describe(
+      'Custom seccomp binary paths (Linux only).',
     ),
-  windows: WindowsConfigSchema.optional().describe(
-    'Windows-specific settings (group, WFP sublayer, proxy port range).',
-  ),
-})
+    bwrapPath: binaryPathSchema
+      .optional()
+      .describe(
+        'Linux only: absolute path to the bwrap (bubblewrap) binary. ' +
+          'When set, this path is used directly instead of resolving "bwrap" via PATH.',
+      ),
+    socatPath: binaryPathSchema
+      .optional()
+      .describe(
+        'Linux only: absolute path to the socat binary. ' +
+          'When set, this path is used directly instead of resolving "socat" via PATH.',
+      ),
+    windows: WindowsConfigSchema.optional().describe(
+      'Windows-specific settings (group, WFP sublayer, proxy port range).',
+    ),
+  })
+  .superRefine((cfg, ctx) => {
+    const creds = cfg.credentials
+    if (!creds) return
+
+    // Every injectHosts entry must be reachable, i.e. present in
+    // allowedDomains. Checked as a literal subset so the config is explicit
+    // about which destinations may receive a real credential.
+    const allowed = new Set(cfg.network.allowedDomains)
+    for (const [i, host] of (creds.injectHosts ?? []).entries()) {
+      if (!allowed.has(host)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['credentials', 'injectHosts', i],
+          message:
+            `injectHosts entry "${host}" is not in network.allowedDomains. ` +
+            'Credential injection is only permitted to destinations the ' +
+            'sandbox is already allowed to reach.',
+        })
+      }
+    }
+
+    // Masked env vars require the TLS-terminated proxy path so the real
+    // credential is only sent to a cert-verified upstream. allowPlaintextInject
+    // is the explicit escape hatch.
+    const hasMaskedEnv = (creds.envVars ?? []).some(v => v.mode === 'mask')
+    if (
+      hasMaskedEnv &&
+      cfg.network.tlsTerminate === undefined &&
+      !creds.allowPlaintextInject
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['credentials'],
+        message:
+          'Credential masking requires network.tlsTerminate so substitution ' +
+          'runs only over a verified TLS connection. Enable tlsTerminate, or ' +
+          'set credentials.allowPlaintextInject to opt out (not recommended).',
+      })
+    }
+  })
 
 // Export inferred types
 export type MitmProxyConfig = z.infer<typeof MitmProxyConfigSchema>

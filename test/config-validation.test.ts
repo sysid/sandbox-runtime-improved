@@ -406,12 +406,23 @@ describe('Config Validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         const messages = result.error.issues.map(i => i.message).join('\n')
-        expect(messages).toContain('not supported yet')
+        expect(messages).toContain('not supported for files yet')
         expect(messages).toContain('"mask"')
       }
     })
 
-    test('rejects mode "mask" for env vars with an actionable message', () => {
+    test('accepts mode "mask" for env vars when tlsTerminate is enabled', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: { ...base.network, tlsTerminate: {} },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects mode "mask" for env vars without tlsTerminate', () => {
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
         credentials: {
@@ -421,8 +432,69 @@ describe('Config Validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         const messages = result.error.issues.map(i => i.message).join('\n')
-        expect(messages).toContain('not supported yet')
+        expect(messages).toContain('tlsTerminate')
+        expect(messages).toContain('allowPlaintextInject')
       }
+    })
+
+    test('allowPlaintextInject permits mask without tlsTerminate', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+          allowPlaintextInject: true,
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects injectHosts entries not present in allowedDomains', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+          injectHosts: ['api.github.com', 'evil.example.com'],
+        },
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const messages = result.error.issues.map(i => i.message).join('\n')
+        expect(messages).toContain('evil.example.com')
+        expect(messages).toContain('network.allowedDomains')
+      }
+    })
+
+    test('accepts injectHosts that are a subset of allowedDomains', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com', 'github.com', '*.amazonaws.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+          injectHosts: ['api.github.com', '*.amazonaws.com'],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects overly-broad wildcards in injectHosts', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: { ...base.network, tlsTerminate: {} },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+          injectHosts: ['*.com'],
+        },
+      })
+      expect(result.success).toBe(false)
     })
 
     test('rejects unknown modes', () => {
