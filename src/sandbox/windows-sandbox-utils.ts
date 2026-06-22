@@ -72,11 +72,25 @@ export interface WindowsSandboxParams {
   /** Per-session proxy auth token; embedded in proxy env URLs. */
   proxyAuthToken?: string
   /**
-   * Inner shell. `cmd` (default), `powershell`, or `pwsh`. The child's
-   * post-`/c` content is **passthrough** — `&` chains, `"…"` quotes
-   * exactly as written. The security boundary is at the OUTER spawn
-   * (this argv is spawned with `shell:false`); the inner cmd.exe runs
-   * INSIDE the sandbox so its metachars are the user's tool.
+   * Inner shell. Two semantics depending on the value:
+   *
+   *   • `'cmd'` (default) / `'powershell'` / `'pwsh'` → a **token**
+   *     mapped to a fixed well-known executable inside
+   *     {@link wrapCommandWithSandboxWindows}.
+   *
+   *   • a path whose basename is `bash` / `bash.exe` → the **actual
+   *     path to exec**. Git Bash has no fixed install location, so the
+   *     caller passes the resolved path. The path is taken as-is —
+   *     callers reach here via
+   *     `SandboxManager` only, and the inner shell runs INSIDE the
+   *     restricted-token sandbox regardless, so an unexpected path is
+   *     not a sandbox-escape vector.
+   *
+   * The child's post-`/c` (or post-`-c`) content is **passthrough** —
+   * `&` chains, `"…"`/`'…'` quotes exactly as written. The security
+   * boundary is at the OUTER spawn (this argv is spawned with
+   * `shell:false`); the inner shell runs INSIDE the sandbox so its
+   * metachars are the user's tool.
    */
   binShell?: string
 }
@@ -462,8 +476,21 @@ export function wrapCommandWithSandboxWindows(p: WindowsSandboxParams): {
   argv.push('--')
 
   const systemRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  const shell = (p.binShell ?? 'cmd').toLowerCase()
-  if (shell === 'pwsh' || shell.includes('powershell')) {
+  // See `WindowsSandboxParams.binShell` for the token-vs-path duality.
+  const rawShell = p.binShell ?? 'cmd'
+  const shell = rawShell.toLowerCase()
+  const shellBase = path.basename(rawShell).toLowerCase()
+  if (shellBase === 'bash' || shellBase === 'bash.exe') {
+    // Git Bash: invoke the caller-supplied path directly with
+    // `-c <command>`. `command` is a fully-assembled bash command
+    // string with its own internal quoting; srt-win's `build_cmdline`
+    // takes the generic non-cmd branch and MSVCRT-quotes it as a
+    // SINGLE argv element, so bash receives it intact as argv[2].
+    // TODO: MSYS2 derives POSIX /tmp from Windows TEMP/TMP itself;
+    // revisit whether any extra TEMP/TMP normalisation is needed for
+    // the bash inner shell under the restricted token.
+    argv.push(rawShell, '-c', p.command)
+  } else if (shell === 'pwsh' || shell.includes('powershell')) {
     const psExe =
       shell === 'pwsh'
         ? 'pwsh.exe'
