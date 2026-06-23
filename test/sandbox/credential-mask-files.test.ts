@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -8,6 +8,11 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import {
+  createServer as createHttpServer,
+  type IncomingHttpHeaders,
+} from 'node:http'
+import type { Server, AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -332,4 +337,125 @@ describe.if(isLinux)('file masking on Linux (bwrap)', () => {
     // Re-initialize for any following tests.
     await SandboxManager.initialize(baseConfig())
   })
+})
+
+/**
+ * End-to-end: a token *file* is masked; inside the sandbox a tool reads
+ * the file and sends its content as a header. The manager-started proxy
+ * substitutes sentinel→real for the file's injectHost only. Reuses the
+ * pattern from credential-mask.test.ts (allowPlaintextInject, plain HTTP
+ * upstream, SandboxManager's own proxy port).
+ */
+describe.if(isLinux)('end-to-end file masking via SandboxManager', () => {
+  const TEST_DIR = join(tmpdir(), 'srt-credmask-e2e-' + Date.now())
+  const SECRET_FILE = join(TEST_DIR, 'token')
+  const SECRET_CONTENT = 'ghp_e2e_real_secret_0123456789'
+  const HOST_A = 'localhost'
+  const HOST_B = 'localtest.me'
+
+  let upstream: Server
+  let upstreamPort: number
+  let lastHeaders: IncomingHttpHeaders | undefined
+
+  beforeAll(async () => {
+    mkdirSync(TEST_DIR, { recursive: true })
+    writeFileSync(SECRET_FILE, SECRET_CONTENT)
+
+    upstream = createHttpServer((req, res) => {
+      lastHeaders = req.headers
+      res.writeHead(200)
+      res.end('ok')
+    })
+    await new Promise<void>(r => upstream.listen(0, '127.0.0.1', () => r()))
+    upstreamPort = (upstream.address() as AddressInfo).port
+
+    await SandboxManager.reset()
+    await SandboxManager.initialize({
+      network: { allowedDomains: [HOST_A, HOST_B], deniedDomains: [] },
+      filesystem: { denyRead: [], allowWrite: ['/tmp'], denyWrite: [] },
+      credentials: {
+        files: [{ path: SECRET_FILE, mode: 'mask', injectHosts: [HOST_A] }],
+        allowPlaintextInject: true,
+      },
+    })
+  })
+
+  afterAll(async () => {
+    await SandboxManager.reset()
+    await new Promise<void>(r => upstream.close(() => r()))
+    rmSync(TEST_DIR, { recursive: true, force: true })
+  })
+
+  // Async spawn — spawnSync would block the event loop and the
+  // in-process proxy/upstream couldn't accept the connection.
+  async function curlViaManagerProxy(
+    url: string,
+    bearer: string,
+    resolve?: string,
+  ): Promise<number> {
+    const proxyPort = SandboxManager.getProxyPort()!
+    const authToken = SandboxManager.getProxyAuthToken()!
+    const args = [
+      '-sS',
+      '--max-time',
+      '10',
+      '--proxy',
+      `http://srt:${authToken}@127.0.0.1:${proxyPort}`,
+      '-H',
+      `Authorization: Bearer ${bearer}`,
+    ]
+    if (resolve) args.push('--resolve', resolve)
+    args.push(url)
+    const child = spawn('curl', args)
+    child.stdout.on('data', () => {})
+    child.stderr.on('data', () => {})
+    return new Promise(r => child.on('close', code => r(code ?? 1)))
+  }
+
+  test('cat inside the sandbox + manager proxy → injectHost gets real bytes', async () => {
+    // bwrap leg: cat inside the sandbox returns the sentinel.
+    const wrapped = await SandboxManager.wrapWithSandbox(`cat ${SECRET_FILE}`)
+    expect(wrapped).not.toContain(SECRET_CONTENT)
+    const inSandbox = spawnSync(wrapped, {
+      shell: true,
+      encoding: 'utf8',
+      timeout: 10000,
+    })
+    expect(inSandbox.status).toBe(0)
+    const sentinel = inSandbox.stdout
+    expect(sentinel.startsWith(SENTINEL_PREFIX)).toBe(true)
+    expect(sentinel).not.toContain(SECRET_CONTENT)
+
+    // Proxy leg: the same sentinel sent through the manager-started
+    // proxy reaches HOST_A (injectHost) as the real file content.
+    lastHeaders = undefined
+    const exit = await curlViaManagerProxy(
+      `http://${HOST_A}:${upstreamPort}/`,
+      sentinel,
+    )
+    expect(exit).toBe(0)
+    expect(lastHeaders?.authorization).toBe(`Bearer ${SECRET_CONTENT}`)
+  }, 20000)
+
+  test('a non-injectHost destination receives the sentinel unchanged', async () => {
+    const wrapped = await SandboxManager.wrapWithSandbox(`cat ${SECRET_FILE}`)
+    const sentinel = spawnSync(wrapped, {
+      shell: true,
+      encoding: 'utf8',
+      timeout: 10000,
+    }).stdout
+
+    // HOST_B is allowlisted but NOT in this file's injectHosts. The
+    // proxy dials localtest.me (publicly resolves to 127.0.0.1) and
+    // forwards the sentinel as-is — fails closed.
+    lastHeaders = undefined
+    const exit = await curlViaManagerProxy(
+      `http://${HOST_B}:${upstreamPort}/`,
+      sentinel,
+      `${HOST_B}:${upstreamPort}:127.0.0.1`,
+    )
+    expect(exit).toBe(0)
+    expect(lastHeaders?.authorization).toBe(`Bearer ${sentinel}`)
+    expect(lastHeaders?.authorization).not.toContain(SECRET_CONTENT)
+  }, 20000)
 })
