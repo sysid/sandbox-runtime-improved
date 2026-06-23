@@ -406,14 +406,30 @@ describe('Config Validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         const messages = result.error.issues.map(i => i.message).join('\n')
-        expect(messages).toContain('not supported yet')
+        expect(messages).toContain('not supported for files yet')
         expect(messages).toContain('"mask"')
       }
     })
 
-    test('rejects mode "mask" for env vars with an actionable message', () => {
+    test('accepts mode "mask" for env vars when tlsTerminate is enabled', () => {
       const result = SandboxRuntimeConfigSchema.safeParse({
         ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects mode "mask" for env vars without tlsTerminate', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: { allowedDomains: ['api.github.com'], deniedDomains: [] },
         credentials: {
           envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
         },
@@ -421,7 +437,283 @@ describe('Config Validation', () => {
       expect(result.success).toBe(false)
       if (!result.success) {
         const messages = result.error.issues.map(i => i.message).join('\n')
-        expect(messages).toContain('not supported yet')
+        expect(messages).toContain('tlsTerminate')
+        expect(messages).toContain('allowPlaintextInject')
+      }
+    })
+
+    test('allowPlaintextInject permits mask without tlsTerminate', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: { allowedDomains: ['api.github.com'], deniedDomains: [] },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+          allowPlaintextInject: true,
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('accepts a masked env var with no injectHosts (defaults to allowedDomains)', () => {
+      // No per-entry injectHosts — the credential defaults to
+      // network.allowedDomains (injection at every reachable host).
+      // injectHosts is an optional narrowing.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects a masked env var whose per-entry injectHosts is explicitly empty', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask', injectHosts: [] }],
+        },
+      })
+      // An explicit empty list would mean "mask but never inject", which
+      // is self-contradictory.
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const messages = result.error.issues.map(i => i.message).join('\n')
+        expect(messages).toContain('explicitly empty')
+        expect(messages).toContain('masked but never injected')
+      }
+    })
+
+    test('rejects block-level credentials.injectHosts (removed key)', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask' }],
+          injectHosts: ['api.github.com'],
+        },
+      })
+      // The block-level default no longer exists; the schema is strict so
+      // a stale config fails rather than silently widening the credential
+      // to every allowedDomain.
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(
+          i => i.path.join('.') === 'credentials',
+        )
+        expect(issue?.message).toContain('injectHosts')
+      }
+    })
+
+    test('accepts a masked env var with per-entry injectHosts', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['registry.npmjs.org'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'NPM_TOKEN',
+              mode: 'mask',
+              injectHosts: ['registry.npmjs.org'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects per-entry injectHosts not reachable via allowedDomains', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'NPM_TOKEN',
+              mode: 'mask',
+              injectHosts: ['registry.npmjs.org'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(i =>
+          i.path.join('.').startsWith('credentials.envVars.0.injectHosts'),
+        )
+        expect(issue?.message).toContain('registry.npmjs.org')
+        expect(issue?.message).toContain('network.allowedDomains')
+      }
+    })
+
+    test('rejects overly-broad wildcards in per-entry injectHosts', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: { ...base.network, tlsTerminate: {} },
+        credentials: {
+          envVars: [{ name: 'GH_TOKEN', mode: 'mask', injectHosts: ['*.com'] }],
+        },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    test('injectHosts on a deny-mode entry is accepted (ignored)', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: { allowedDomains: ['api.github.com'], deniedDomains: [] },
+        credentials: {
+          envVars: [
+            { name: 'GH_TOKEN', mode: 'deny', injectHosts: ['api.github.com'] },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('accepts per-entry injectHosts that are a subset of allowedDomains', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com', 'github.com', '*.amazonaws.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['api.github.com', '*.amazonaws.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('accepts an exact injectHost covered by a wildcard allowedDomain', () => {
+      // The injectHosts ⊆ allowedDomains check is semantic coverage, not
+      // literal string membership — api.github.com is reachable via
+      // *.github.com, so this must validate.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['*.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['api.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('accepts a wildcard injectHost covered by a broader allowed wildcard', () => {
+      // Every host under *.api.github.com is also under *.github.com.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['*.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['*.api.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+    })
+
+    test('rejects a wildcard injectHost not covered by an exact allowedDomain', () => {
+      // *.github.com would inject at gist.github.com, which is not
+      // reachable when allowedDomains only contains api.github.com.
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['api.github.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['*.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(i =>
+          i.path.join('.').startsWith('credentials.envVars.0.injectHosts'),
+        )
+        expect(issue?.message).toContain('*.github.com')
+        expect(issue?.message).toContain('not reachable')
+      }
+    })
+
+    test('rejects an exact injectHost not covered by an unrelated wildcard', () => {
+      const result = SandboxRuntimeConfigSchema.safeParse({
+        ...base,
+        network: {
+          allowedDomains: ['*.example.com'],
+          deniedDomains: [],
+          tlsTerminate: {},
+        },
+        credentials: {
+          envVars: [
+            {
+              name: 'GH_TOKEN',
+              mode: 'mask',
+              injectHosts: ['api.github.com'],
+            },
+          ],
+        },
+      })
+      expect(result.success).toBe(false)
+      if (!result.success) {
+        const issue = result.error.issues.find(i =>
+          i.path.join('.').startsWith('credentials.envVars.0.injectHosts'),
+        )
+        expect(issue?.message).toContain('api.github.com')
+        expect(issue?.message).toContain('not reachable')
       }
     })
 

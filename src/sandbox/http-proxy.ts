@@ -11,6 +11,7 @@ import type { MitmCA } from './mitm-ca.js'
 import {
   decideAndRespond,
   type FilterRequestCallback,
+  type MutateForwardedHeaders,
 } from './request-filter.js'
 import {
   peekForClientHello,
@@ -55,6 +56,22 @@ export interface HttpProxyServerOptions {
    * HTTPS requests. See request-filter.ts.
    */
   filterRequest?: FilterRequestCallback
+
+  /**
+   * Mutate forwarded headers on the TLS-terminated path, after the allow
+   * decision and before the upstream request is built. The upstream leg is
+   * always cert-verified (rejectUnauthorized defaults to true), so the TLS
+   * handshake fails before any mutated header bytes reach an unverified
+   * server. See {@link MutateForwardedHeaders}.
+   */
+  mutateHeaders?: MutateForwardedHeaders
+
+  /**
+   * Mutate forwarded headers on the plain-HTTP path. Separate from
+   * `mutateHeaders` so callers can wire the TLS path only — credential
+   * injection over plaintext is opt-in.
+   */
+  mutateHeadersPlaintext?: MutateForwardedHeaders
 
   /**
    * Additional trusted CA(s) for the terminating proxy's outbound TLS leg.
@@ -161,6 +178,7 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
           terminateAndForward(
             options.mitmCA,
             options.filterRequest,
+            options.mutateHeaders,
             socket,
             peeked.head,
             { hostname, port, upstreamCA: options.tlsTerminateUpstreamCA },
@@ -273,6 +291,7 @@ export function createHttpProxyServer(options: HttpProxyServerOptions): Server {
       if (req.socket.destroyed) return
 
       const fwdHeaders = { ...stripHopByHop(req.headers), host: url.host }
+      options.mutateHeadersPlaintext?.(fwdHeaders, hostname)
 
       // Decide upstream route: MITM unix socket > parent HTTP proxy > direct.
       const mitmSocketPath = options.getMitmSocketPath?.(hostname)

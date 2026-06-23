@@ -42,10 +42,13 @@ export interface FsWriteRestrictionConfig {
  * - `denyReadPaths`: paths to merge into the read-deny set
  *   (FsReadRestrictionConfig.denyOnly), unioned with caller-supplied denyRead.
  * - `unsetEnvVars`: environment variable names to unset inside the sandbox.
+ * - `setEnvVars`: environment variables to set inside the sandbox to a
+ *   sentinel value (overrides the inherited real value).
  */
 export interface CredentialRestrictionConfig {
   denyReadPaths: string[]
   unsetEnvVars: string[]
+  setEnvVars: Record<string, string>
 }
 
 /**

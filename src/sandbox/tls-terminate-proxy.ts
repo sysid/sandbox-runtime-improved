@@ -24,6 +24,7 @@ import type { MitmCA } from './mitm-ca.js'
 import {
   decideAndRespond,
   type FilterRequestCallback,
+  type MutateForwardedHeaders,
 } from './request-filter.js'
 import { mintLeafCert, secureContextFor } from './mitm-leaf.js'
 import { stripHopByHop } from './parent-proxy.js'
@@ -115,6 +116,7 @@ export type TerminateTarget = {
 export function terminateAndForward(
   ca: MitmCA,
   filterRequest: FilterRequestCallback | undefined,
+  mutateHeaders: MutateForwardedHeaders | undefined,
   socket: Duplex,
   head: Buffer,
   target: TerminateTarget,
@@ -137,7 +139,7 @@ export function terminateAndForward(
   })
 
   inner.on('request', (req, res) => {
-    void forwardUpstream(filterRequest, req, res, target)
+    void forwardUpstream(filterRequest, mutateHeaders, req, res, target)
   })
   inner.on('tlsClientError', (err, sock) => {
     logForDebugging(
@@ -195,6 +197,7 @@ export function terminateAndForward(
 
 async function forwardUpstream(
   filterRequest: FilterRequestCallback | undefined,
+  mutateHeaders: MutateForwardedHeaders | undefined,
   req: IncomingMessage,
   res: ServerResponse,
   target: TerminateTarget,
@@ -239,6 +242,11 @@ async function forwardUpstream(
   // correct verification under both Node and Bun.
   const fwdHeaders = stripHopByHop(req.headers)
   delete fwdHeaders.host
+  // Header mutation runs after the allow decision and before httpsRequest.
+  // The upstream TLS handshake (rejectUnauthorized defaults to true)
+  // completes before any HTTP bytes are written, so mutated headers never
+  // reach an unverified server.
+  mutateHeaders?.(fwdHeaders, target.hostname)
 
   // TODO(terminating-tls): honour parentProxy for the upstream leg.
   const upstream = httpsRequest(

@@ -1,6 +1,7 @@
 import { createHttpProxyServer } from './http-proxy.js'
 import { createSocksProxyServer } from './socks-proxy.js'
 import type { SocksProxyWrapper } from './socks-proxy.js'
+import { SentinelRegistry } from './credential-sentinel.js'
 import { createMitmCA, disposeMitmCA, type MitmCA } from './mitm-ca.js'
 import { logForDebugging } from '../utils/debug.js'
 import { whichSync } from '../utils/which.js'
@@ -46,14 +47,14 @@ import {
   expandGlobPattern,
 } from './sandbox-utils.js'
 import { SandboxViolationStore } from './sandbox-violation-store.js'
+import type { MutateForwardedHeaders } from './request-filter.js'
 import {
   canonicalizeHost,
   isValidHost,
   redactUrl,
   resolveParentProxy,
-  stripBrackets,
 } from './parent-proxy.js'
-import { isIP } from 'node:net'
+import { matchesDomainPattern } from './domain-pattern.js'
 import type { ChildProcess } from 'node:child_process'
 import type { ResolvedParentProxy } from './parent-proxy.js'
 import { EOL } from 'node:os'
@@ -82,6 +83,9 @@ let mitmCA: MitmCA | undefined
 // dialing 127.0.0.1:<proxyPort> can't reach the filter callback.
 let proxyAuthToken: string | undefined
 const sandboxViolationStore = new SandboxViolationStore()
+// Per-session sentinel↔real-value map for masked credentials. Lives only in
+// process memory; never written to disk or logged. Cleared on reset().
+const sentinelRegistry = new SentinelRegistry()
 
 // ============================================================================
 // Private Helper Functions (not exported)
@@ -101,26 +105,6 @@ function registerCleanup(): void {
   process.once('SIGINT', cleanupHandler)
   process.once('SIGTERM', cleanupHandler)
   cleanupRegistered = true
-}
-
-function matchesDomainPattern(hostname: string, pattern: string): boolean {
-  const h = hostname.toLowerCase()
-  // Bare '*' is deny-all when it appears in deniedDomains. The schema only
-  // accepts it there (allowedDomains still rejects it as too broad).
-  if (pattern === '*') return true
-  // Support wildcard patterns like *.example.com. Never apply wildcard
-  // suffix matching to IP literals — an IPv6 zone-ID payload like
-  // `::ffff:1.2.3.4%x.allowed.com` would otherwise pass .endsWith() while
-  // the OS connects to the bare IP. isValidHost already rejects `%`, but
-  // we refuse here too for defence in depth.
-  if (pattern.startsWith('*.')) {
-    if (isIP(stripBrackets(h))) return false
-    const baseDomain = pattern.substring(2).toLowerCase()
-    return h.endsWith('.' + baseDomain)
-  }
-
-  // Exact match for non-wildcard patterns
-  return h === pattern.toLowerCase()
 }
 
 async function filterNetworkRequest(
@@ -197,6 +181,28 @@ async function filterNetworkRequest(
  * Returns the socket path if the host matches any MITM domain pattern,
  * otherwise returns undefined.
  */
+/**
+ * Build the header-mutation callback that substitutes sentinel→real for
+ * masked credentials. Returns undefined when no `credentials` block is
+ * configured — wiring the seam at all is unnecessary then.
+ *
+ * Per-host gating happens inside the registry: each sentinel carries its
+ * own injectHosts list and substitutes independently, so credential A's
+ * sentinel cannot be laundered through credential B's allowed host. The
+ * returned closure does not log header values; the registry holds the only
+ * copy of the real value.
+ */
+function buildCredentialInjector(): MutateForwardedHeaders | undefined {
+  if (!config?.credentials) return undefined
+  return (headers, destHost) => {
+    sentinelRegistry.substituteInHeaders(
+      headers,
+      destHost,
+      matchesDomainPattern,
+    )
+  }
+}
+
 function getMitmSocketPath(host: string): string | undefined {
   if (!config?.network.mitmProxy) {
     return undefined
@@ -279,12 +285,20 @@ async function startHttpProxyServer(
   portRange: readonly [number, number] | undefined,
   excludePorts: ReadonlySet<number>,
 ): Promise<number> {
+  const injectCredentials = buildCredentialInjector()
   httpProxyServer = createHttpProxyServer({
     filter: (port: number, host: string) =>
       filterNetworkRequest(port, host, sandboxAskCallback),
     getMitmSocketPath,
     mitmCA,
     filterRequest: config?.network.filterRequest,
+    // TLS-terminated path always gets the injector; the plain-HTTP path
+    // only when explicitly opted in. Without the opt-in, a sentinel sent
+    // over plain HTTP reaches the upstream unchanged (fails closed).
+    mutateHeaders: injectCredentials,
+    mutateHeadersPlaintext: config?.credentials?.allowPlaintextInject
+      ? injectCredentials
+      : undefined,
     parentProxy,
     proxyAuthToken,
   })
@@ -557,30 +571,51 @@ function checkDependencies(ripgrepConfig?: {
 }
 
 /**
- * Build the read-deny / env-unset sets implied by the `credentials` config.
+ * Build the read-deny / env-unset / env-set maps implied by the
+ * `credentials` config.
  *
  * Only explicitly declared sources are restricted: `mode: 'deny'` file
- * entries join the read-deny set and `mode: 'deny'` env vars are unset.
- * The mode filter keeps the structure ready for future non-deny modes
- * (e.g. masking).
+ * entries join the read-deny set, `mode: 'deny'` env vars are unset, and
+ * `mode: 'mask'` env vars are set to a per-session sentinel registered in
+ * {@link sentinelRegistry}. A masked var with no value in the host
+ * environment is skipped — there is nothing to protect, and emitting an
+ * unset var would change tool behaviour (presence checks would pass where
+ * they didn't before).
  */
 function getCredentialRestrictions(
   credentials: CredentialsConfig | undefined,
+  allowedDomains: readonly string[] | undefined,
 ): CredentialRestrictionConfig {
   if (!credentials) {
-    return { denyReadPaths: [], unsetEnvVars: [] }
+    return { denyReadPaths: [], unsetEnvVars: [], setEnvVars: {} }
   }
 
   const files = credentials.files ?? []
   const denyReadPaths = files.filter(f => f.mode === 'deny').map(f => f.path)
 
-  const unsetEnvVars = (credentials.envVars ?? [])
-    .filter(v => v.mode === 'deny')
-    .map(v => v.name)
+  const unsetEnvVars: string[] = []
+  const setEnvVars: Record<string, string> = {}
+  for (const v of credentials.envVars ?? []) {
+    if (v.mode === 'deny') {
+      unsetEnvVars.push(v.name)
+    } else if (v.mode === 'mask') {
+      const real = process.env[v.name]
+      if (real === undefined) continue
+      // Effective injectHosts: per-entry narrows; if unset, default to
+      // every reachable host (network.allowedDomains). injectHosts is an
+      // *optional narrowing*, not a required allowlist. Trade-off: a
+      // masked credential with no injectHosts is injectable at every host
+      // the sandbox can reach — narrow it explicitly when the credential
+      // should only go to a subset.
+      const injectHosts = v.injectHosts ?? allowedDomains ?? []
+      setEnvVars[v.name] = sentinelRegistry.register(v.name, real, injectHosts)
+    }
+  }
 
   return {
     denyReadPaths: [...new Set(denyReadPaths)],
     unsetEnvVars: [...new Set(unsetEnvVars)],
+    setEnvVars,
   }
 }
 
@@ -594,7 +629,10 @@ function getFsReadConfig(): FsReadRestrictionConfig {
   const rawDenyRead = [
     ...new Set([
       ...config.filesystem.denyRead,
-      ...getCredentialRestrictions(config.credentials).denyReadPaths,
+      ...getCredentialRestrictions(
+        config.credentials,
+        config.network.allowedDomains,
+      ).denyReadPaths,
     ]),
   ]
 
@@ -818,6 +856,7 @@ async function wrapWithSandbox(
   // replacing it — so explicit filesystem restrictions always survive.
   const credentialRestrictions = getCredentialRestrictions(
     customConfig?.credentials ?? config?.credentials,
+    customConfig?.network?.allowedDomains ?? config?.network?.allowedDomains,
   )
   const rawDenyRead = [
     ...new Set([
@@ -899,6 +938,7 @@ async function wrapWithSandbox(
         readConfig,
         writeConfig,
         unsetEnvVars: credentialRestrictions.unsetEnvVars,
+        setEnvVars: credentialRestrictions.setEnvVars,
         allowUnixSockets: getAllowUnixSockets(),
         allowAllUnixSockets: getAllowAllUnixSockets(),
         allowLocalBinding: getAllowLocalBinding(),
@@ -933,6 +973,7 @@ async function wrapWithSandbox(
         readConfig,
         writeConfig,
         unsetEnvVars: credentialRestrictions.unsetEnvVars,
+        setEnvVars: credentialRestrictions.setEnvVars,
         enableWeakerNestedSandbox: getEnableWeakerNestedSandbox(),
         allowAllUnixSockets: getAllowAllUnixSockets(),
         binShell,
@@ -1261,6 +1302,7 @@ async function reset(): Promise<void> {
   initializationPromise = undefined
   parentProxy = undefined
   mitmCA = undefined
+  sentinelRegistry.clear()
 }
 
 function getSandboxViolationStore() {
@@ -1376,6 +1418,7 @@ export interface ISandboxManager {
   getLinuxGlobPatternWarnings(): string[]
   getConfig(): SandboxRuntimeConfig | undefined
   getMitmCA(): MitmCA | undefined
+  getSentinelRegistry(): SentinelRegistry
   updateConfig(newConfig: SandboxRuntimeConfig): void
   cleanupAfterCommand(): void
   reset(): Promise<void>
@@ -1413,6 +1456,7 @@ export const SandboxManager: ISandboxManager = {
   cleanupAfterCommand,
   reset,
   getMitmCA: () => mitmCA,
+  getSentinelRegistry: () => sentinelRegistry,
   getSandboxViolationStore,
   annotateStderrWithSandboxFailures,
   getLinuxGlobPatternWarnings,

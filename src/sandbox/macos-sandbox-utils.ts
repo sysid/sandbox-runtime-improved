@@ -37,6 +37,8 @@ export interface MacOSSandboxParams {
   writeConfig: FsWriteRestrictionConfig | undefined
   /** Environment variable names to unset for the sandboxed child (env -u) */
   unsetEnvVars?: string[]
+  /** Environment variables to set for the sandboxed child (env NAME=VALUE) */
+  setEnvVars?: Record<string, string>
   ignoreViolations?: IgnoreViolationsConfig | undefined
   allowPty?: boolean
   allowGitConfig?: boolean
@@ -787,6 +789,7 @@ export function wrapCommandWithSandboxMacOS(
     readConfig,
     writeConfig,
     unsetEnvVars,
+    setEnvVars,
     allowPty,
     allowGitConfig = false,
     enableWeakerNetworkIsolation = false,
@@ -800,7 +803,8 @@ export function wrapCommandWithSandboxMacOS(
   const hasReadRestrictions = readConfig && readConfig.denyOnly.length > 0
   const hasWriteRestrictions = writeConfig !== undefined
   const hasEnvRestrictions =
-    unsetEnvVars !== undefined && unsetEnvVars.length > 0
+    (unsetEnvVars !== undefined && unsetEnvVars.length > 0) ||
+    (setEnvVars !== undefined && Object.keys(setEnvVars).length > 0)
 
   // No sandboxing needed
   if (
@@ -870,12 +874,19 @@ export function wrapCommandWithSandboxMacOS(
   // flags must precede the VAR=VALUE assignments so SRT's own proxy plumbing
   // vars survive even if a caller lists one of them as a denied credential.
   const unsetEnvArgs = (unsetEnvVars ?? []).flatMap(name => ['-u', name])
+  // Masked credentials override the inherited real value with a sentinel.
+  // Placed before the proxy plumbing assignments for the same precedence
+  // reason as the -u flags.
+  const setEnvArgs = Object.entries(setEnvVars ?? {}).map(
+    ([name, value]) => `${name}=${value}`,
+  )
 
   // Use `env` command to set environment variables - each VAR=value is a separate
   // argument that shellquote handles properly, avoiding shell quoting issues
   const wrappedCommand = shellquote.quote([
     'env',
     ...unsetEnvArgs,
+    ...setEnvArgs,
     ...proxyEnvArgs,
     '/usr/bin/sandbox-exec',
     '-p',

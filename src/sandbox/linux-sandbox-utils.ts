@@ -47,6 +47,8 @@ export interface LinuxSandboxParams {
   writeConfig?: FsWriteRestrictionConfig
   /** Environment variable names to unset inside the sandbox (bwrap --unsetenv) */
   unsetEnvVars?: string[]
+  /** Environment variables to set inside the sandbox (bwrap --setenv NAME VALUE) */
+  setEnvVars?: Record<string, string>
   enableWeakerNestedSandbox?: boolean
   allowAllUnixSockets?: boolean
   binShell?: string
@@ -1197,6 +1199,7 @@ export async function wrapCommandWithSandboxLinux(
     readConfig,
     writeConfig,
     unsetEnvVars,
+    setEnvVars,
     enableWeakerNestedSandbox,
     allowAllUnixSockets,
     binShell,
@@ -1215,7 +1218,8 @@ export async function wrapCommandWithSandboxLinux(
   const hasReadRestrictions = readConfig && readConfig.denyOnly.length > 0
   const hasWriteRestrictions = writeConfig !== undefined
   const hasEnvRestrictions =
-    unsetEnvVars !== undefined && unsetEnvVars.length > 0
+    (unsetEnvVars !== undefined && unsetEnvVars.length > 0) ||
+    (setEnvVars !== undefined && Object.keys(setEnvVars).length > 0)
 
   // Check if we need any sandboxing
   if (
@@ -1271,8 +1275,13 @@ export async function wrapCommandWithSandboxLinux(
     // argument order, so SRT's own proxy plumbing vars survive even if a
     // caller lists one of them as a denied credential.
     if (hasEnvRestrictions) {
-      for (const name of unsetEnvVars) {
+      for (const name of unsetEnvVars ?? []) {
         bwrapArgs.push('--unsetenv', name)
+      }
+      // Masked credentials override the inherited real value with a
+      // sentinel; bwrap --setenv replaces any inherited value of NAME.
+      for (const [name, value] of Object.entries(setEnvVars ?? {})) {
+        bwrapArgs.push('--setenv', name, value)
       }
     }
 

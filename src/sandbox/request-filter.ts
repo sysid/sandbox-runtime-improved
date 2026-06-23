@@ -8,7 +8,11 @@
  * enforces the decision; the library does not bless any matching DSL.
  */
 
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type {
+  IncomingHttpHeaders,
+  IncomingMessage,
+  ServerResponse,
+} from 'node:http'
 import { Readable } from 'node:stream'
 import { logForDebugging } from '../utils/debug.js'
 
@@ -35,6 +39,20 @@ export type RequestDecision = {
 export type FilterRequestCallback = (
   request: Request,
 ) => Promise<RequestDecision>
+
+/**
+ * Mutate the headers that will be sent upstream, in place.
+ *
+ * Runs after the allow/deny decision and hop-by-hop stripping, immediately
+ * before the upstream request is built. `destHost` is the canonical
+ * destination host (the CONNECT target on the TLS-terminated path, or the
+ * absolute-URI host on the plain-HTTP path) — never the client-supplied
+ * Host header, which is spoofable.
+ */
+export type MutateForwardedHeaders = (
+  headers: IncomingHttpHeaders,
+  destHost: string,
+) => void
 
 const BODYLESS_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
