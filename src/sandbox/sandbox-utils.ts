@@ -310,6 +310,13 @@ export const CA_TRUST_VARS = [
   'AWS_CA_BUNDLE',
   'CARGO_HTTP_CAINFO',
   'DENO_CERT',
+  // gcloud ignores SSL_CERT_FILE/REQUESTS_CA_BUNDLE; this is its dedicated
+  // override (maps to core/custom_ca_certs_file).
+  'CLOUDSDK_CORE_CUSTOM_CA_CERTS_FILE',
+  // Nix-built binaries are patched to read this instead of SSL_CERT_FILE, and
+  // it's typically pre-set to the Nix system bundle in the parent env, so we
+  // must override it explicitly.
+  'NIX_SSL_CERT_FILE',
 ] as const
 
 export function generateProxyEnvVars(
