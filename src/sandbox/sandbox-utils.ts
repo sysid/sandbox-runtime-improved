@@ -447,11 +447,22 @@ export function generateProxyEnvVars(
     }
   }
 
-  if (socksProxyPort) {
-    // Use socks5h:// for proper DNS resolution through proxy
-    envVars.push(`ALL_PROXY=socks5h://${auth}localhost:${socksProxyPort}`)
-    envVars.push(`all_proxy=socks5h://${auth}localhost:${socksProxyPort}`)
+  // ALL_PROXY: prefer the HTTP proxy URL over SOCKS. httpx (and similar
+  // Python clients) eagerly import `socksio` at client construction when
+  // ALL_PROXY is a socks5h:// URL and crash with ImportError in envs that
+  // lack the package — before any bytes hit the wire, so the mux's
+  // protocol sniffing can't help. With the mux serving both protocols on
+  // one port, anything that actually speaks SOCKS to this URL still
+  // reaches the SOCKS handler, so nothing is lost by advertising http://.
+  // Falls back to socks5h:// only when no HTTP proxy port exists, which no
+  // current caller configures.
+  const allProxy = httpProxyPort
+    ? `http://${auth}localhost:${httpProxyPort}`
+    : `socks5h://${auth}localhost:${socksProxyPort}`
+  envVars.push(`ALL_PROXY=${allProxy}`)
+  envVars.push(`all_proxy=${allProxy}`)
 
+  if (socksProxyPort) {
     // Configure Git to use SSH through the proxy so DNS resolution happens outside the sandbox.
     // ControlMaster/ControlPath are disabled because SSH connection multiplexing breaks inside
     // the sandbox: the mux socket path from the user's ssh config (typically under ~/.ssh) is
@@ -533,9 +544,9 @@ export function generateProxyEnvVars(
     envVars.push(`grpc_proxy=socks5h://${auth}localhost:${socksProxyPort}`)
   }
 
-  // WARNING: Do not set HTTP_PROXY/HTTPS_PROXY to SOCKS URLs when only SOCKS proxy is available
-  // Most HTTP clients do not support SOCKS URLs in these variables and will fail, and we want
-  // to avoid overriding the client otherwise respecting the ALL_PROXY env var which points to SOCKS.
+  // Do not set HTTP_PROXY/HTTPS_PROXY to SOCKS URLs in the SOCKS-only path:
+  // most HTTP clients reject socks*:// in those vars. ALL_PROXY (above)
+  // already carries the route for clients that read it.
 
   return envVars
 }
