@@ -2,6 +2,7 @@ import { createHttpProxyServer } from './http-proxy.js'
 import { createSocksProxyServer } from './socks-proxy.js'
 import type { SocksProxyWrapper } from './socks-proxy.js'
 import { createMuxProxyServer, type MuxProxyServer } from './mux-proxy.js'
+import { listenInRange } from './listen-in-range.js'
 import { SentinelRegistry } from './credential-sentinel.js'
 import {
   MaskedFileStore,
@@ -249,66 +250,6 @@ function getMitmSocketPath(host: string): string | undefined {
   }
 
   return undefined
-}
-
-/**
- * Bind `server.listen()` to the first free port in `[lo, hi]`,
- * skipping `EADDRINUSE`. With `range` undefined, binds to ephemeral
- * port 0 (the previous behaviour).
- *
- * Used on Windows: the WFP loopback permit only covers a fixed port
- * range (default 60080–60089), so the JS proxies must bind inside it
- * for the sandboxed child to reach them. On other platforms the
- * sandbox layer (seatbelt rule, namespace+socat) targets whatever
- * port we landed on, so ephemeral is fine.
- */
-function listenInRange(
-  server: {
-    once(ev: 'error' | 'listening', cb: (e?: Error) => void): unknown
-    removeListener(ev: 'error' | 'listening', cb: (e?: Error) => void): unknown
-  },
-  doListen: (port: number) => void,
-  range: readonly [number, number] | undefined,
-  exclude: ReadonlySet<number>,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const [lo, hi] = range ?? [0, 0]
-    let port = lo
-    const tryNext = (): void => {
-      while (exclude.has(port) && port <= hi) port++
-      if (port > hi) {
-        reject(
-          new Error(
-            `No free port in range ${lo}-${hi} (excluding ${[...exclude].join(',')})`,
-          ),
-        )
-        return
-      }
-      const onListening = (): void => {
-        server.removeListener('error', onError)
-        resolve()
-      }
-      const onError = (err?: Error): void => {
-        // The paired 'listening' once-listener never fired; drop it
-        // so retries don't accumulate stale listeners.
-        server.removeListener('listening', onListening)
-        if (
-          range &&
-          (err as NodeJS.ErrnoException)?.code === 'EADDRINUSE' &&
-          port < hi
-        ) {
-          port++
-          tryNext()
-          return
-        }
-        reject(err ?? new Error('listen error'))
-      }
-      server.once('error', onError)
-      server.once('listening', onListening)
-      doListen(range ? port : 0)
-    }
-    tryNext()
-  })
 }
 
 async function startMuxProxyServer(

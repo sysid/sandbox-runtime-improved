@@ -723,8 +723,10 @@ function generateSandboxProfile({
       )
     }
 
-    // Allow localhost TCP operations for the SOCKS proxy
-    if (socksProxyPort !== undefined) {
+    // Allow localhost TCP operations for the SOCKS proxy. Skip when it's
+    // the same port as the HTTP proxy (the mux serves both on one port);
+    // SBPL accepts duplicate allow clauses but there's no need to emit them.
+    if (socksProxyPort !== undefined && socksProxyPort !== httpProxyPort) {
       profile.push(
         `(allow network-bind (local ip "localhost:${socksProxyPort}"))`,
       )

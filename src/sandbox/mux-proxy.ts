@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { unlink } from 'node:fs/promises'
 import { logForDebugging } from '../utils/debug.js'
 import { getPlatform } from '../utils/platform.js'
+import { listenInRange } from './listen-in-range.js'
 
 /**
  * First-byte values that select the SOCKS handler. SOCKS5's greeting is
@@ -185,40 +186,18 @@ export function createMuxProxyServer(opts: MuxProxyOptions): MuxProxyServer {
       // The mux→backend hop originates from the parent process (not the
       // sandboxed child), so WFP doesn't strictly require it; staying in
       // range just keeps the port surface predictable.
-      const [lo, hi] = opts.httpBackendPortRange ?? [0, 0]
-      let lastErr: unknown
-      for (let p = lo; p <= hi; p++) {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            const onError = (err: Error): void => {
-              opts.httpServer.removeListener('listening', onListening)
-              reject(err)
-            }
-            const onListening = (): void => {
-              opts.httpServer.removeListener('error', onError)
-              resolve()
-            }
-            opts.httpServer.once('error', onError)
-            opts.httpServer.once('listening', onListening)
-            opts.httpServer.listen(p, '127.0.0.1')
-          })
-          const addr = opts.httpServer.address()
-          backendTcpPort =
-            addr && typeof addr === 'object' ? addr.port : undefined
-          logForDebugging(
-            `mux: HTTP backend listening on 127.0.0.1:${backendTcpPort}`,
-          )
-          return backendTcpPort
-        } catch (err) {
-          lastErr = err
-          if ((err as NodeJS.ErrnoException)?.code !== 'EADDRINUSE') throw err
-        }
-      }
-      throw new Error(
-        `mux: no free HTTP backend port in ${lo}-${hi}: ${
-          (lastErr as Error)?.message ?? 'all in use'
-        }`,
+      await listenInRange(
+        opts.httpServer,
+        p => opts.httpServer.listen(p, '127.0.0.1'),
+        opts.httpBackendPortRange,
+        new Set(),
       )
+      const addr = opts.httpServer.address()
+      backendTcpPort = addr && typeof addr === 'object' ? addr.port : undefined
+      logForDebugging(
+        `mux: HTTP backend listening on 127.0.0.1:${backendTcpPort}`,
+      )
+      return backendTcpPort
     },
     async close(): Promise<void> {
       for (const s of openSockets) s.destroy()

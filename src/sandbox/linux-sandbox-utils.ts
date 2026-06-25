@@ -517,6 +517,8 @@ export async function initializeLinuxNetworkBridge(
   const socat = socatPath ?? 'socat'
   const socketId = randomBytes(8).toString('hex')
   const httpSocketPath = join(tmpdir(), `claude-http-${socketId}.sock`)
+  // Only allocated when ports differ; in the mux case the SOCKS side
+  // reuses httpSocketPath.
   const socksSocketPath = join(tmpdir(), `claude-socks-${socketId}.sock`)
 
   // Start HTTP bridge
@@ -551,40 +553,55 @@ export async function initializeLinuxNetworkBridge(
     throw new Error('Failed to start HTTP bridge process')
   }
 
-  // Start SOCKS bridge
-  const socksSocatArgs = [
-    `UNIX-LISTEN:${socksSocketPath},fork,reuseaddr`,
-    `TCP:localhost:${socksProxyPort},keepalive,keepidle=10,keepintvl=5,keepcnt=3`,
-  ]
+  // SOCKS bridge: when the host serves both protocols on one port (the mux),
+  // a second socat to the same TCP target is redundant — reuse the HTTP
+  // bridge's process and socket path. Downstream consumers
+  // (LinuxNetworkBridgeContext, in-sandbox socat, cleanup) treat duplicate
+  // refs idempotently. A separate bridge is only spawned when the ports
+  // differ (external proxy override).
+  let socksBridgeProcess: ChildProcess
+  let socksSockPath: string
+  if (socksProxyPort === httpProxyPort) {
+    socksBridgeProcess = httpBridgeProcess
+    socksSockPath = httpSocketPath
+  } else {
+    socksSockPath = socksSocketPath
+    const socksSocatArgs = [
+      `UNIX-LISTEN:${socksSocketPath},fork,reuseaddr`,
+      `TCP:localhost:${socksProxyPort},keepalive,keepidle=10,keepintvl=5,keepcnt=3`,
+    ]
 
-  logForDebugging(`Starting SOCKS bridge: ${socat} ${socksSocatArgs.join(' ')}`)
-
-  const socksBridgeProcess = spawn(socat, socksSocatArgs, {
-    stdio: 'ignore',
-  })
-
-  // Add error and exit handlers to monitor bridge health — registered
-  // before the !pid check for the same reason as the HTTP bridge above.
-  socksBridgeProcess.on('error', err => {
-    logForDebugging(`SOCKS bridge process error: ${err}`, { level: 'error' })
-  })
-  socksBridgeProcess.on('exit', (code, signal) => {
     logForDebugging(
-      `SOCKS bridge process exited with code ${code}, signal ${signal}`,
-      { level: code === 0 ? 'info' : 'error' },
+      `Starting SOCKS bridge: ${socat} ${socksSocatArgs.join(' ')}`,
     )
-  })
 
-  if (!socksBridgeProcess.pid) {
-    // Clean up HTTP bridge
-    if (httpBridgeProcess.pid) {
-      try {
-        process.kill(httpBridgeProcess.pid, 'SIGTERM')
-      } catch {
-        // Ignore errors
+    socksBridgeProcess = spawn(socat, socksSocatArgs, {
+      stdio: 'ignore',
+    })
+
+    // Add error and exit handlers to monitor bridge health — registered
+    // before the !pid check for the same reason as the HTTP bridge above.
+    socksBridgeProcess.on('error', err => {
+      logForDebugging(`SOCKS bridge process error: ${err}`, { level: 'error' })
+    })
+    socksBridgeProcess.on('exit', (code, signal) => {
+      logForDebugging(
+        `SOCKS bridge process exited with code ${code}, signal ${signal}`,
+        { level: code === 0 ? 'info' : 'error' },
+      )
+    })
+
+    if (!socksBridgeProcess.pid) {
+      // Clean up HTTP bridge
+      if (httpBridgeProcess.pid) {
+        try {
+          process.kill(httpBridgeProcess.pid, 'SIGTERM')
+        } catch {
+          // Ignore errors
+        }
       }
+      throw new Error('Failed to start SOCKS bridge process')
     }
-    throw new Error('Failed to start SOCKS bridge process')
   }
 
   // Wait for both sockets to be ready
@@ -601,7 +618,7 @@ export async function initializeLinuxNetworkBridge(
 
     try {
       // fs already imported
-      if (fs.existsSync(httpSocketPath) && fs.existsSync(socksSocketPath)) {
+      if (fs.existsSync(httpSocketPath) && fs.existsSync(socksSockPath)) {
         logForDebugging(`Linux bridges ready after ${i + 1} attempts`)
         break
       }
@@ -637,7 +654,7 @@ export async function initializeLinuxNetworkBridge(
 
   return {
     httpSocketPath,
-    socksSocketPath,
+    socksSocketPath: socksSockPath,
     httpBridgeProcess,
     socksBridgeProcess,
     httpProxyPort,
