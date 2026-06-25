@@ -992,9 +992,9 @@ try {
     throw "A22 setup: third-party edit produced no SDDL change " +
           "($sddl22Edited)"
   }
-  # Restore. The parent's current DACL no longer equals the
-  # recorded stamped_sd → the parent restore must LEAVE IT
-  # (not blind-write original_sd). The AU:(RX) ACE must survive.
+  # Restore. The parent's DACL now carries our marker + an extra
+  # ACE → classify_sd → StampedUnrecognized → restore must LEAVE
+  # IT (fail-closed). The AU:(RX) ACE must survive.
   $sout22 = & $Exe acl restore --group-sid $GroupSid `
               --holder-pid $Holder --json | Out-String
   if ($LASTEXITCODE -ne 0) {

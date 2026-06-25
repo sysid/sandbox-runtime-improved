@@ -1087,7 +1087,9 @@ fn snapshot_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Snapshot> {
 }
 
 /// Prune dead brokers and restore any snapshots they orphaned.
-/// `force` restores even when the current SD ≠ stamped_sd.
+/// `force` overrides the restore ladder's fail-closed gates
+/// (writes `original_sd` back even when `classify_sd` does not
+/// recognise the on-disk SD as our stamp).
 ///
 /// Per-path commit: the dead-broker prune is one short tx (pure DB,
 /// CASCADE); then each orphan's (restore_sd FS mutation + snapshot
