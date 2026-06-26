@@ -370,6 +370,7 @@ describe.if(isWindows)('Windows sandbox: srt-win helpers', () => {
   it('initialize() throws with install instructions when group is absent', async () => {
     const cfg = createTestConfig()
     cfg.windows!.groupSid = 'S-1-5-32-9999' // valid form, definitely absent
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun:test types .rejects.toThrow() as void; the await is required at runtime
     await expect(SandboxManager.initialize(cfg)).rejects.toThrow(
       /one-time install.*npx sandbox-runtime windows-install/is,
     )
@@ -503,6 +504,7 @@ describe.if(isWindows)('Windows sandbox: SandboxManager network', () => {
   })
 
   it('wrapWithSandbox() throws on Windows (use wrapWithSandboxArgv)', async () => {
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun:test types .rejects.toThrow() as void; the await is required at runtime
     await expect(SandboxManager.wrapWithSandbox('echo hi')).rejects.toThrow(
       /wrapWithSandboxArgv/,
     )
@@ -1330,6 +1332,7 @@ describe.if(isWindows)('Windows sandbox: file deny', () => {
   }, 30_000)
 
   it('F10: filesystem.allowWrite throws on Windows (deny-only)', async () => {
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun:test types .rejects.toThrow() as void; the await is required at runtime
     await expect(
       SandboxManager.initialize(createFsTestConfig({ allowWrite: [scratch] })),
     ).rejects.toThrow(/allowWrite is not supported on Windows/)

@@ -157,6 +157,10 @@ jobs:
         if: matrix.os != 'windows'
         run: npm install
 
+      - name: Lint (ESLint)
+        if: matrix.os == 'linux' && matrix.arch == 'x86-64'
+        run: npx eslint .
+
       - name: Build seccomp binaries (Linux)
         if: matrix.os == 'linux'
         run: npm run build:seccomp

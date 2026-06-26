@@ -21,6 +21,7 @@ export default [
         projectService: {
           allowDefaultProject: [
             'eslint.config.js',
+            'test/utils/which-node-test.mjs',
             'vendor/build-common.ts',
             'vendor/seccomp/build.ts',
             'vendor/srt-win/build.ts',
@@ -82,14 +83,14 @@ export default [
       'eslint-plugin-n/no-unsupported-features/es-builtins': [
         'error',
         {
-          version: '>=18.0.0',
+          version: '>=20.11.0',
           ignores: [],
         },
       ],
       'eslint-plugin-n/no-unsupported-features/node-builtins': [
         'error',
         {
-          version: '>=18.0.0',
+          version: '>=20.11.0',
           // Web-standard Request/Headers/ReadableStream and the
           // Readable.toWeb/fromWeb adapters are available since Node 18.0.0
           // (the rule flags them as experimental until 21–23) and stable in
@@ -100,6 +101,10 @@ export default [
             'ReadableStream',
             'stream.Readable.toWeb',
             'stream.Readable.fromWeb',
+            // Backported to ^20.11.0 and ^21.2.0; the rule's semver
+            // intersection rejects `>=20.11.0` because that range
+            // includes 21.0.x/22.0-22.15 which lack it.
+            'import.meta.dirname',
           ],
         },
       ],
