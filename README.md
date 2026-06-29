@@ -5,7 +5,7 @@
 
 Based on [Anthropic Sandbox Runtime](https://github.com/anthropic-experimental/sandbox-runtime).
 
-This fork will be rebased on [SRT](https://github.com/anthropic-experimental/sandbox-runtime) continuously (currently based on upstream **v0.0.56**).
+This fork will be rebased on [SRT](https://github.com/anthropic-experimental/sandbox-runtime) continuously (currently based on upstream **v0.0.61**).
 As new features become available, equivalent local ones will be removed.
 
 > Objective: keep as close to original as possible, while allowing selected additional features.
@@ -522,7 +522,7 @@ Windows support is **alpha and the design is in flux**. The current implementati
 
 ### Setup
 
-Run `npx @anthropic-ai/sandbox-runtime windows-install` once per machine (requires admin; creates the `sandbox-runtime-net` local group and installs the WFP egress filters). **Log out and log back in** for group membership to take effect on your token. After that, `SandboxManager.initialize()` and the `srt` CLI work as on other platforms.
+Run `npx @sysid/sandbox-runtime-improved windows-install` once per machine (requires admin; creates the `sandbox-runtime-net` local group and installs the WFP egress filters). **Log out and log back in** for group membership to take effect on your token. After that, `SandboxManager.initialize()` and the `srti` CLI work as on other platforms.
 
 ### Threat model
 

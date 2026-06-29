@@ -41,7 +41,7 @@ make all
      ├─ clean            # rm -rf dist
      ├─ build            # tsc
      └─ npm publish --access public --tag latest
-         └─ prepublishOnly  # copies vendor/ into dist, aborts if seccomp binaries missing
+         └─ prepublishOnly  # verifies seccomp binaries present in vendor/, aborts if missing
  └─ npm install -g @sysid/sandbox-runtime-improved   # installs what was just published
 
 ```
@@ -210,12 +210,13 @@ missing from the package.
     → clean                  ← removes dist/
     → build                  ← tsc compiles TypeScript
     → npm publish
-        → prepublishOnly     ← copies vendor/ into dist/, aborts if binaries missing
+        → prepublishOnly     ← verifies vendor/seccomp binaries present, aborts if missing
 ```
 
-The "files" field in package.json ships both vendor/ and dist/, so the binaries end up in the
-tarball at vendor/seccomp/{x64,arm64}/apply-seccomp. You can verify with make check-package
-anytime.
+The "files" field in package.json ships `vendor/seccomp`, so the Docker-built binaries end up
+in the tarball at vendor/seccomp/{x64,arm64}/apply-seccomp directly (no copy into dist/ — upstream
+dropped the dead `dist/vendor` copy in v0.0.61, since the seccomp resolver already finds binaries
+at the package-root `vendor/` location). You can verify with make check-package anytime.
 
 ## Notable upstream features
 
